@@ -1,0 +1,56 @@
+{
+    "device":"cuda",
+
+    "world_model_training_params": {"epochs":1200,
+                                    "batch_size":1024,
+                                    "N":16,
+                                    "M":32,
+                                    "learning_rate":1e-4,
+                                    "weight_decay":1e-5,
+                                    "forecast_decay":1.0,
+                                    "step_time_seconds":0.02,
+                                    "N_pred":100},
+
+ 
+
+    "world_model_arch_params":{"gru_hidden_dim":256,
+                               "num_gru_layers":2,
+                               "embed_dim":256,
+                               "mlp_head_dim":128,
+                               "with_uncertainity":false},
+
+    
+    "policy_arch_params":{"policy":{"mlp_hiddens":[128,128,128],
+                                    "activation":["elu","elu","elu"]},
+                          "value_function":{"mlp_hiddens":[128,128,128],
+                                            "activation":["elu","elu","elu"]}},
+
+    
+
+    "poicy_training_params":{"imagination_environments":4096,
+                             "imagination_steps_per_iteration":100,
+                             "steps_time_seconds":0.02,
+                             "buffer_size":1000,
+                             "epochs":2500,
+                             "learning_rate":0.001,
+                             "weight_decay":0.0,
+                             "learning_epochs":5,
+                             "mini_batches":4,
+                             "kl_divergence_target":0.01,
+                             "discount_factor":0.99,
+                             "clip_range":0.2,
+                             "entropy_coefficient":0.005},
+
+    "robot_params":{"name":"unitree G1",
+                    "state_dims":96,
+                    "contact_dims":30,
+                    "action_dims":29},
+    
+
+    "save_world_model": true,
+    "save_policy": true,
+    "save_world_model_train_logs_csv":true,
+    "save_freq": 100
+    
+    
+}
