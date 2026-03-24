@@ -1,0 +1,18 @@
+# should be the requirements.txt file
+# include a setup.py file
+
+pip install "mujoco>=2.3.4"
+pip install robot_descriptions
+torch='2.3.0+cu121'
+
+https://github.com/ZhengyiLuo/PHC/tree/master
+
+
+
+db saving and data processing
+test the saved traj. db 
+cleaning test dir
+copy motion related and robot related files from ASAP
+revise and modify the entire code flow
+push to git and message
+
