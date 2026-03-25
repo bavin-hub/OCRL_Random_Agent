@@ -28,7 +28,15 @@ class Inference:
         JOINT_PICK = [i for i in range(29)]
 
         # get a trajectory
-        combined_trajectory = load_dataset(db_path=self.config["db_path"], combine_trajectory=True)
+        M_tr = self.config['world_model_training_params']['M']
+        N_tr = self.config['world_model_training_params']['N']
+        db_paths = self.config.get('db_paths') or [self.config['db_path']]
+        combined_trajectory = load_dataset(
+            db_paths=db_paths,
+            combine_trajectory=True,
+            M=M_tr,
+            N=N_tr,
+        )
         print(len(combined_trajectory[0]))
         print('traj len : ', len(combined_trajectory))
 

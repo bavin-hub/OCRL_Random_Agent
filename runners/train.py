@@ -23,7 +23,14 @@ class Trainer:
     def update(self, model_type, load_dataset):
         
         # get data loader obj
-        self.data_loader = load_dataset(db_path=self.config["db_path"], batch_size=self.config["world_model_training_params"]["batch_size"])
+        wt = self.config['world_model_training_params']
+        db_paths = self.config.get('db_paths') or [self.config['db_path']]
+        self.data_loader = load_dataset(
+            db_paths=db_paths,
+            batch_size=wt['batch_size'],
+            M=wt['M'],
+            N=wt['N'],
+        )
 
         # create model instance
         M, N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
