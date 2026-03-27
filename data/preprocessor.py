@@ -39,43 +39,71 @@ class LazyCombinedTrajectoryView:
 
 
 class TrajectoryChunksDataset(Dataset):
-    def __init__(self, db_path: str = None, db_paths=None, M: int = 32, N: int = 8, traj_cache_size: int = 32):
+    def __init__(self, db_path: str = None, db_paths=None, M: int = 32, N: int = 8, traj_cache_size: int = 32, 
+                 run_mode: str = None, combined_db_path: str = None):
         paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
         self.db_paths = paths
         self.M = M
         self.N = N
         self._traj_cache = OrderedDict()
         self._traj_cache_limit = max(1, int(traj_cache_size))
+        self.run_mode = run_mode
+        self.combined_db_path = combined_db_path
 
         self._sources = []
         traj_lengths = []
 
         try:
-            for db_file in self.db_paths:
-                conn = sqlite3.connect(db_file)
+            if self.run_mode == "train":
+                # pass
+                conn = sqlite3.connect(self.combined_db_path)
                 cur = conn.cursor()
-                for file_k, row in enumerate(cur.execute('SELECT rowid, * FROM PretrainingData ORDER BY rowid')):
-                    rowid = row[0]
-                    payload = row[1]
-                    blob = json.loads(payload)
-                    traj = blob[f'trajectory-{file_k + 1}']
-                    traj_lengths.append(len(traj))
-                    del traj
-                    self._sources.append((db_file, rowid, file_k))
-                conn.close()
+                query = '''SELECT * From PretrainingData'''
+                cur.execute(query)
 
-            if not traj_lengths:
-                raise ValueError('No trajectories found in database(s)')
+                rows = cur.fetchall()
+                print('total rows : ', len(rows))
 
-            self._cum_lens = np.zeros(len(traj_lengths) + 1, dtype=np.int64)
-            self._cum_lens[1:] = np.cumsum(traj_lengths)
-            self.combined_len = int(self._cum_lens[-1])
-            self.len_of_single_trajectory = traj_lengths[0]
-            self.total_trajectories = len(traj_lengths)
-            print(
-                f'Db index built. Shards: {len(self.db_paths)}, '
-                f'trajectories: {self.total_trajectories}, combined steps: {self.combined_len}'
-            )
+                all_trajectories = [json.loads(traj[0])['trajectory-1'] for i, traj in enumerate(rows)]
+                # print(type(all_trajectories))
+                # print(len(all_trajectories))
+                # print(type(all_trajectories[0]))
+                # print(type(all_trajectories[0][0]))
+                # print(len(all_trajectories[0][0][0]))
+
+                # print(all_trajectories)
+                self.all_windows = self.accumalate_windows(self.M,
+                                                           self.N,
+                                                           all_trajectories=all_trajectories)
+
+
+            else:
+                for db_file in self.db_paths:
+                    conn = sqlite3.connect(db_file)
+                    cur = conn.cursor()
+                    for file_k, row in enumerate(cur.execute('SELECT rowid, * FROM PretrainingData ORDER BY rowid')):
+                        rowid = row[0]
+                        payload = row[1]
+                        blob = json.loads(payload)
+                        traj = blob[f'trajectory-{file_k + 1}']
+                        traj_lengths.append(len(traj))
+                        del traj
+                        self._sources.append((db_file, rowid, file_k))
+                    conn.close()
+
+                if not traj_lengths:
+                    raise ValueError('No trajectories found in database(s)')
+
+                self._cum_lens = np.zeros(len(traj_lengths) + 1, dtype=np.int64)
+                self._cum_lens[1:] = np.cumsum(traj_lengths)
+                self.combined_len = int(self._cum_lens[-1])
+                self.len_of_single_trajectory = traj_lengths[0]
+                self.total_trajectories = len(traj_lengths)
+                print(
+                    f'Db index built. Shards: {len(self.db_paths)}, '
+                    f'trajectories: {self.total_trajectories}, combined steps: {self.combined_len}'
+                )
+            # pass
         except Exception as e:
             paths_str = ', '.join(self.db_paths)
             raise ValueError(f'Not able to load rollout DB(s) at [{paths_str}]: {e}') from e
@@ -143,6 +171,7 @@ class TrajectoryChunksDataset(Dataset):
                         all_windows.append(window)
 
         else:
+            print('good inside the else part')
             combined_trajectory = list(chain.from_iterable(all_trajectories))
             for i in range(len(combined_trajectory)):
                 tuple_window = combined_trajectory[i : i + (M + N)]
@@ -160,9 +189,13 @@ class TrajectoryChunksDataset(Dataset):
         return all_windows
 
     def __len__(self):
+        if self.run_mode == "train":
+            return len(self.all_windows)
         return max(0, self.combined_len - (self.M + self.N) + 1)
 
     def __getitem__(self, index):
+        if self.run_mode == "train":
+            return self.all_windows[index]
         start = int(index)
         steps = [self._get_combined_step(start + j) for j in range(self.M + self.N)]
         return np.array(
@@ -183,9 +216,12 @@ def load_dataset(
     M: int = 32,
     N: int = 8,
     traj_cache_size: int = 32,
+    combined_db_path: str = None,
+    run_mode: str = None
 ):
     paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
-    dataset = TrajectoryChunksDataset(db_paths=paths, M=M, N=N, traj_cache_size=traj_cache_size)
+    dataset = TrajectoryChunksDataset(db_paths=paths, M=M, N=N, traj_cache_size=traj_cache_size, 
+                                      combined_db_path=combined_db_path, run_mode=run_mode)
 
     if combine_trajectory:
         return dataset.get_combined_trajectory()
