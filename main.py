@@ -46,11 +46,16 @@ def run(args):
     db_paths = sorted(
         os.path.join(db_base, f) for f in os.listdir(db_base) if f.endswith('.db')
     )
+    
+    print()
+
     if not db_paths:
         raise FileNotFoundError(f"No .db files in {db_base}")
     config['db_base_dir'] = os.path.abspath(db_base)
     config['db_paths'] = [os.path.abspath(p) for p in db_paths]
     config['db_path'] = config['db_paths'][0]
+    config['combined_db_path'] = os.path.join(os.getcwd(), f"data/{args.db_dir_name}/combined_transitions.db")
+    config["run_mode"] = args.run_mode
     agent = Agent(config)
 
 

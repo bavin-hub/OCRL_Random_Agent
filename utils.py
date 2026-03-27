@@ -62,6 +62,22 @@ def LoadModel(model_obj, model_name, model_dir_name):
     return model_obj
 
 
+def count_parameters(model):
+    trainable_params = 0
+    non_trainable_params = 0
+    for name, parameter in model.named_parameters():
+        if parameter.requires_grad:
+            trainable_params += parameter.numel()
+        else:
+            non_trainable_params += parameter.numel()
+            
+    print(f"Total Trainable Params: {trainable_params}")
+    print(f"Total Non-Trainable Params: {non_trainable_params}")
+    print(f"Total Params: {trainable_params + non_trainable_params}")
+    return trainable_params, non_trainable_params
+
+
+
 def save_plot_figure(fig, model_dir_name: str, filename: str, dpi: int = 150):
     """Write ``fig`` to ``logs/plots/{model_dir_name}/{filename}`` (adds .png if no extension)."""
     _, plots_dir = create_runs_dir(model_dir_name)
