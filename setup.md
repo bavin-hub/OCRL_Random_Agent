@@ -56,6 +56,7 @@ git checkout baseline_policy
 sudo apt install -y libyaml-cpp-dev libboost-all-dev libeigen3-dev libspdlog-dev libfmt-dev
 pip install -e .
 cd ../../..
+cp play.py data/baseline_policies/unitree_rl_mjlab/scripts/
 ```
 
 ---
