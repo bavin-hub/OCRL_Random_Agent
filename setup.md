@@ -12,9 +12,7 @@
 - [5. Rollout Sampling](#5-rollout-sampling)
   - [Use Existing Rollouts](#51-use-existing-rollouts)
   - [Sample Your Own Rollouts](#52-sample-your-own-rollouts)
-- [6. World Model](#6-world-model)
-  - [Train World Model](#61-train-world-model)
-  - [Test World Model](#62-test-world-model)
+
 
 ---
 
@@ -44,7 +42,7 @@ conda activate random_agent
 ## 3. Clone Repository
 
 ```bash
-git clone git@github.com:bavin-hub/OCRL_Random_Agent.git
+git clone <repo_link>
 cd OCRL_Random_Agent
 git submodule update --init --recursive
 ```
@@ -124,54 +122,4 @@ cp base.py ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/vie
 
 > **Note:** `num_transitions` and `num_trajectories` values can be configured inside `base.py`.
 
----
 
-## 6. World Model
-
-### 6.1 Train World Model
-
-```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/<transitions_dir_name> \
-  --run_mode train \
-  --model_type <world_model_type>
-```
-
-**Example:**
-
-```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/1000000_transitions \
-  --run_mode train \
-  --model_type wm_gru
-```
-
-### 6.2 Test World Model
-
-```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/<transitions_dir_name> \
-  --run_mode eval \
-  --model_type <world_model_type> \
-  --model_dir_name <model_dir> \
-  --model_name <model_name.pth>
-```
-
-**Example:**
-
-```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/1000000_transitions \
-  --run_mode eval \
-  --model_type wm_gru \
-  --model_dir_name wm_gru_2026-03-25_23:26:29 \
-  --model_name wm_gru-epoch_30.pth
-```
-
-| Argument | Description |
-|---|---|
-| `--db_dir_name` | Path to the rollout dataset directory |
-| `--run_mode` | `train` to train, `eval` to evaluate |
-| `--model_type` | Model architecture (e.g., `wm_gru`) |
-| `--model_dir_name` | Directory of the saved model checkpoint |
-| `--model_name` | Checkpoint filename (`.pth`) |
