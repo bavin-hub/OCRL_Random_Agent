@@ -106,7 +106,7 @@ mkdir -p data/pretraining_rollouts
 3. Place it inside `data/pretraining_rollouts/`, then unzip and clean up:
 
 ```bash
-unzip ${PWD}/data/pretraining_rollouts/1000000_transitions.zip
+unzip data/pretraining_rollouts/1000000_transitions.zip -d data/pretraining_rollouts
 sudo rm -rf ${PWD}/data/pretraining_rollouts/1000000_transitions.zip
 ```
 
