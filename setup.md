@@ -42,7 +42,7 @@ conda activate random_agent
 ## 3. Clone Repository
 
 ```bash
-git clone <repo_link>
+git clone git@github.com:bavin-hub/OCRL_Random_Agent.git
 cd OCRL_Random_Agent
 git submodule update --init --recursive
 ```
