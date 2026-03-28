@@ -1,3 +1,1 @@
-[submodule "data/other_policies_trajectory_collection/unitree_rl_mjlab"]
-	path = data/other_policies_trajectory_collection/unitree_rl_mjlab
-	url = https://github.com/unitreerobotics/unitree_rl_mjlab.git
+
