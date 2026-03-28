@@ -64,9 +64,10 @@ cd ../../..
 
 ### 4.1 Download Pretrained Weights
 
-1. Download the zip from: `<unitree_rl_mjlab_weights_link>`
-2. Place it inside `data/baseline_policies/unitree_rl_mjlab/`
-3. Unzip and clean up:
+1. Download the zip from:
+   > https://drive.google.com/file/d/1MA_KeaQ0xAqDaJMZwxHRZc8smB0hSknd/view?usp=drive_link
+3. Place it inside `data/baseline_policies/unitree_rl_mjlab/`
+4. Unzip and clean up:
 
 ```bash
 unzip data/baseline_policies/unitree_rl_mjlab/logs.zip
