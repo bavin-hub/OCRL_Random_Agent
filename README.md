@@ -8,8 +8,7 @@
 
 - [Robotic World Model](#-robotic-world-model)
 - [Setup](#-setup)
-- [Train](#-train)
-- [Inference](#-inference)
+- [World Model](#-world-model)
 - [TODOs](#-todos)
 
 ---
@@ -51,33 +50,24 @@ This implementation uses a **GRU-based world model** (`wm_gru`) trained on prere
 
 ## ⚙️ Setup
 
-### 1. Clone the Repository
-
-```bash
-git clone <repo_link>
-```
-
-### 2. Initialize Submodules
-
-```bash
-git submodule update --init --recursive
-```
-
-### 3. Configure Base File
-
-Copy and paste the `base.py` file into the appropriate directory as required by your environment configuration:
-
-```bash
-cp base.py <target_directory>/base.py
-```
-
-> **Note:** Ensure your Python environment is set up with the required dependencies before proceeding. It is recommended to use a virtual environment (e.g., `conda` or `venv`).
+For the full step-by-step setup guide, see **[setup.md](setup.md)**.
 
 ---
 
-## 🏋️ Train
+## 🌐 World Model
+
+### Train
 
 Train the GRU-based world model on prerecorded transition data:
+
+```bash
+python3 main.py \
+  --db_dir_name pretraining_rollouts/<transitions_dir_name> \
+  --run_mode train \
+  --model_type <world_model_type>
+```
+
+**Example:**
 
 ```bash
 python3 main.py \
@@ -86,33 +76,39 @@ python3 main.py \
   --model_type wm_gru
 ```
 
-| Argument | Description |
-|---|---|
-| `--db_dir_name` | Path to the rollout dataset directory |
-| `--run_mode` | Set to `train` to run the training loop |
-| `--model_type` | Model architecture to use (e.g., `wm_gru`) |
-
-Training checkpoints will be saved automatically and timestamped for versioning.
-
----
-
-## 🔍 Inference
+### Inference
 
 Run inference using a pretrained world model checkpoint:
 
 ```bash
 python3 main.py \
+  --db_dir_name pretraining_rollouts/<transitions_dir_name> \
+  --run_mode eval \
+  --model_type <world_model_type> \
+  --model_dir_name <model_dir> \
+  --model_name <model_name.pth>
+```
+
+**Example:**
+
+```bash
+python3 main.py \
   --db_dir_name pretraining_rollouts/1000000_transitions \
-  --run_mode train \
+  --run_mode eval \
   --model_type wm_gru \
-  --model_dir_name wm_gru_2026-03-25_23:26:29/wm_gru-epoch_50.pth
+  --model_dir_name wm_gru_2026-03-25_23:26:29 \
+  --model_name wm_gru-epoch_30.pth
 ```
 
 | Argument | Description |
 |---|---|
-| `--model_dir_name` | Path to the saved model checkpoint (`.pth` file) |
+| `--db_dir_name` | Path to the rollout dataset directory |
+| `--run_mode` | `train` to train, `eval` to evaluate |
+| `--model_type` | Model architecture (e.g., `wm_gru`) |
+| `--model_dir_name` | Directory of the saved model checkpoint |
+| `--model_name` | Checkpoint filename (`.pth`) |
 
-> Replace `wm_gru_2026-03-25_23:26:29/wm_gru-epoch_50.pth` with the path to your own trained checkpoint.
+> Training checkpoints are saved automatically and timestamped for versioning.
 
 ---
 
