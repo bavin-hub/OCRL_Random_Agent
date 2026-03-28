@@ -75,14 +75,16 @@ sudo rm -rf data/baseline_policies/unitree_rl_mjlab/logs.zip
 ### 4.2 Test Baseline Policy
 
 ```bash
-python data/baseline_policies/unitree_rl_mjlab/scripts/play.py Unitree-G1-Flat \
+cd data/baseline_policies/unitree_rl_mjlab
+python scripts/play.py Unitree-G1-Flat \
   --checkpoint_file=logs/rsl_rl/g1_velocity/2026-xx-xx_xx-xx-xx/model_xx.pt
 ```
 
 ### 4.3 Train from Scratch
 
 ```bash
-python data/baseline_policies/unitree_rl_mjlab/scripts/train.py Unitree-G1-Flat \
+cd data/baseline_policies/unitree_rl_mjlab
+python scripts/train.py Unitree-G1-Flat \
   --env.scene.num-envs=4096
 ```
 
