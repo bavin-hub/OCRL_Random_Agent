@@ -57,6 +57,7 @@ sudo apt install -y libyaml-cpp-dev libboost-all-dev libeigen3-dev libspdlog-dev
 pip install -e .
 cd ../../..
 cp play.py data/baseline_policies/unitree_rl_mjlab/scripts/
+cp base.py ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/viewer/
 ```
 
 ---
