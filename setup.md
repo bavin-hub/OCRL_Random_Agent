@@ -56,8 +56,6 @@ git checkout baseline_policy
 sudo apt install -y libyaml-cpp-dev libboost-all-dev libeigen3-dev libspdlog-dev libfmt-dev
 pip install -e .
 cd ../../..
-cp play.py data/baseline_policies/unitree_rl_mjlab/scripts/
-cp base.py ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/viewer/
 ```
 
 ---
@@ -118,9 +116,10 @@ sudo rm -rf ${PWD}/data/pretraining_rollouts/1000000_transitions.zip
 
 ### 5.2 Sample Your Own Rollouts
 
-1. Copy the `base.py` viewer file into the mjlab package:
+1. Copy the `base.py` and `play` viewer file into the mjlab package:
 
 ```bash
+cp play.py data/baseline_policies/unitree_rl_mjlab/scripts/
 cp base.py ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/viewer/
 ```
 
