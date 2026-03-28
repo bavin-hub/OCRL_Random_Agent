@@ -16,9 +16,10 @@ class RandomWorldStepGru(nn.Module):
         super(RandomWorldStepGru, self).__init__()
         self.lr = lr
         # self.ln = nn.LayerNorm(state_dim + action_dim)
-        self.state_action_encoder = nn.Linear(state_dim + action_dim, embed_dim)
-        self.gru_unit = nn.GRU(input_size=embed_dim, hidden_size=hidden_dim, batch_first=True, num_layers=num_gru_layers)
+        # self.state_action_encoder = nn.Linear(state_dim + action_dim, embed_dim)
+        self.gru_unit = nn.GRU(input_size=state_dim + action_dim, hidden_size=hidden_dim, batch_first=True, num_layers=num_gru_layers)
         self.state_mlp_head = nn.Linear(hidden_dim, mlp_dim)
+        self.state_mlp_act = nn.ReLU()
         self.mu_head = nn.Linear(mlp_dim, state_dim)
         self.mu_act = nn.Tanh()
         self.logstd_head = nn.Linear(mlp_dim, state_dim)
@@ -44,11 +45,11 @@ class RandomWorldStepGru(nn.Module):
         
         # ln_out = self.ln(input_st_at)
 
-        encoder_out = self.state_action_encoder(input_st_at)
-        gru_out, hidden_state = self.gru_unit(encoder_out, hidden_state)
+        # encoder_out = self.state_action_encoder(input_st_at)
+        gru_out, hidden_state = self.gru_unit(input_st_at, hidden_state)
 
         if predict:
-            head_out = self.state_mlp_head(gru_out)
+            head_out = self.state_mlp_act(self.state_mlp_head(gru_out))
             mu_t_next = self.mu_act(self.mu_head(head_out))
             # mu_t_next = self.mu_head(head_out)
             logstd_t_next = self.logstd_head(head_out).clamp(*self.logstd_range)

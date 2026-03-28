@@ -2,8 +2,9 @@ import os
 import sqlite3
 from typing import List
 
-all_transitions_path = "/home/bavin/personal_git_repos/OCRL_Random_Agent/data/pretraining_rollouts/1000000_transitions"
 
+# all_transitions_path = "/home/bavin/personal_git_repos/OCRL_Random_Agent/"
+all_transitions_path = os.path.join(os.getcwd(), "data/pretraining_rollouts/1000000_transitions")
 all_transition_dbs = os.listdir(all_transitions_path)
 
 print(len(all_transition_dbs))

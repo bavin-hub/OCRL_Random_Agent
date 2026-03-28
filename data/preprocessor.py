@@ -79,17 +79,18 @@ class TrajectoryChunksDataset(Dataset):
 
             else:
                 for db_file in self.db_paths:
-                    conn = sqlite3.connect(db_file)
-                    cur = conn.cursor()
-                    for file_k, row in enumerate(cur.execute('SELECT rowid, * FROM PretrainingData ORDER BY rowid')):
-                        rowid = row[0]
-                        payload = row[1]
-                        blob = json.loads(payload)
-                        traj = blob[f'trajectory-{file_k + 1}']
-                        traj_lengths.append(len(traj))
-                        del traj
-                        self._sources.append((db_file, rowid, file_k))
-                    conn.close()
+                    if "combined" not in db_file:
+                        conn = sqlite3.connect(db_file)
+                        cur = conn.cursor()
+                        for file_k, row in enumerate(cur.execute('SELECT rowid, * FROM PretrainingData ORDER BY rowid')):
+                            rowid = row[0]
+                            payload = row[1]
+                            blob = json.loads(payload)
+                            traj = blob[f'trajectory-{file_k + 1}']
+                            traj_lengths.append(len(traj))
+                            del traj
+                            self._sources.append((db_file, rowid, file_k))
+                        conn.close()
 
                 if not traj_lengths:
                     raise ValueError('No trajectories found in database(s)')

@@ -2,8 +2,8 @@
     "device":"cuda",
 
     "world_model_training_params": {"epochs":1200,
-                                    "batch_size":1024,
-                                    "N":16,
+                                    "batch_size":2048,
+                                    "N":8,
                                     "M":32,
                                     "learning_rate":1e-4,
                                     "weight_decay":1e-5,
@@ -50,7 +50,7 @@
     "save_world_model": true,
     "save_policy": true,
     "save_world_model_train_logs_csv":true,
-    "save_freq": 100
+    "save_freq": 10
     
     
 }
