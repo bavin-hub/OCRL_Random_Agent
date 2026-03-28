@@ -1,7 +1,7 @@
 import json, time
 from tqdm.notebook import trange, tqdm
 import torch
-from utils import SaveModel, CreateWorlModelInstance, get_model_name
+from utils import SaveModel, CreateWorlModelInstance, get_model_name, count_parameters
 import time
 
 # only state-action pair
@@ -30,16 +30,20 @@ class Trainer:
             batch_size=wt['batch_size'],
             M=wt['M'],
             N=wt['N'],
+            combined_db_path=self.config.get("combined_db_path"),
+            run_mode=self.config.get("run_mode")
         )
 
         # create model instance
         M, N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
+        decay = self.config['world_model_training_params']['forecast_decay']
         state_dims = self.config['robot_params']['state_dims']
         action_dims = self.config['robot_params']['action_dims']
         world_model = CreateWorlModelInstance(self.config)
         world_model.train()
         print('World Model instantiated')
-        self.get_model_params(world_model)
+        # self.get_model_params(world_model)
+        count_parameters(world_model)
         training_loss = []
 
         # model dir 
@@ -62,7 +66,7 @@ class Trainer:
                 x = batch_st_ct_at.to(self.config["device"]) # x -> (bs, M+N, s_dim+a_dim)
                 seq_len = x.shape[1]
                 batch_loss = 0
-                alpha = self.config['world_model_training_params']['forecast_decay']
+                alpha = 1.0
                 # Iterate over RNN timestamps
                 for t in range(seq_len-1):
                     loss_t = 0
@@ -78,7 +82,7 @@ class Trainer:
                         target = torch.unsqueeze(x[:, t+1, :state_dims], dim=1)
                         loss_t = world_model.nll_loss(dist, target)
                         batch_loss += alpha * loss_t
-                        alpha *= alpha
+                        alpha *= decay
                 
                 batch_loss /= N
 
