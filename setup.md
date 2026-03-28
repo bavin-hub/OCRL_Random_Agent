@@ -70,7 +70,7 @@ cd ../../..
 4. Unzip and clean up:
 
 ```bash
-unzip data/baseline_policies/unitree_rl_mjlab/logs.zip
+unzip data/baseline_policies/unitree_rl_mjlab/logs.zip -d data/baseline_policies/unitree_rl_mjlab/
 sudo rm -rf data/baseline_policies/unitree_rl_mjlab/logs.zip
 ```
 
