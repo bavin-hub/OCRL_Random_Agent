@@ -1,8 +1,8 @@
 {
     "device":"cuda",
 
-    "world_model_training_params": {"epochs":1200,
-                                    "batch_size":2048,
+    "world_model_training_params": {"epochs":250,
+                                    "batch_size":1024,
                                     "N":8,
                                     "M":32,
                                     "learning_rate":1e-4,
