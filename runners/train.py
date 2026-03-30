@@ -75,12 +75,18 @@ class Trainer:
                                                  ht, predict=False) # torch.unsqueeze(x[:, t, :], dim=1) => (bs, s_dim+a_dim) -> (bs, 1, s_dim+a_dim)
                     else:
                         if t == M-1:
-                            st_next_pred, ht, dist = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True)
+                            x_prev = torch.unsqueeze(x[:, t, :96], dim=1)
+                            st_next_pred, ht, dist = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
                         else:
                             st_next_pred, ht, dist = world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -action_dims:], dim=1)), dim=2), 
-                                                                                 ht, predict=True)
+                                                                                 ht, predict=True, x_prev=st_next_pred)
                         target = torch.unsqueeze(x[:, t+1, :state_dims], dim=1)
                         loss_t = world_model.nll_loss(dist, target)
+                        # print(st_next_pred.shape)
+                        # print(target.shape)
+                        # print("\n")
+                        # loss_t = world_model.mse_loss(st_true=target,
+                                                    #   st_pred=st_next_pred)
                         batch_loss += alpha * loss_t
                         alpha *= decay
                 
