@@ -39,19 +39,29 @@ class VisionRssmWorldModel(nn.Module):
             nn.SiLU(),
             nn.AdaptiveAvgPool2d((4, 4)),
         )
+<<<<<<< HEAD
         # flattens the 4x4x256 to a single embedding vector of size cnn_embed_dim
+=======
+>>>>>>> ad6c49f ( added vision module)
         self.encoder_proj = nn.Linear(256 * 4 * 4, cnn_embed_dim)
 
         self.action_proj = nn.Sequential(
             nn.Linear(action_dim, action_embed_dim),
             nn.SiLU(),
         )
+<<<<<<< HEAD
         #frame, action, hidden_state
         prior_in = cnn_embed_dim + action_embed_dim + hidden_dim
         #frame, action, next_frame, hidden_state
         post_in = cnn_embed_dim + action_embed_dim + cnn_embed_dim + hidden_dim
 
         #Ga
+=======
+
+        prior_in = cnn_embed_dim + action_embed_dim + hidden_dim
+        post_in = cnn_embed_dim + action_embed_dim + cnn_embed_dim + hidden_dim
+
+>>>>>>> ad6c49f ( added vision module)
         self.prior_mu = nn.Linear(prior_in, latent_dim)
         self.prior_logvar = nn.Linear(prior_in, latent_dim)
         self.post_mu = nn.Linear(post_in, latent_dim)
