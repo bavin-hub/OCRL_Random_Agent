@@ -76,6 +76,29 @@ python3 main.py \
   --model_type wm_gru
 ```
 
+Train the vision world model (`RGB-D_t + action_t -> RGB-D_{t+1}`):
+
+```bash
+python3 main.py \
+  --db_dir_name pretraining_rollouts/1000000_transitions \
+  --run_mode train \
+  --model_type wm_vision_rssm
+```
+
+Before collecting visual rollouts, copy the patched viewer base file into your `mjlab` install (see `setup.md` step 5.2).  
+Optional camera/render settings can be controlled through env vars:
+
+```bash
+export VISION_CAMERA=tracking
+export VISION_WIDTH=256
+export VISION_HEIGHT=256
+export VISION_CAPTURE_EVERY_N=1
+export ROLLOUT_NUM_TRAJECTORIES=100
+export ROLLOUT_TRANSITIONS_PER_TRAJ=500
+```
+
+`VISION_CAPTURE_EVERY_N` should be `1` for one-step prediction (`t -> t+1`).
+
 ### Inference
 
 Run inference using a pretrained world model checkpoint:
@@ -104,7 +127,7 @@ python3 main.py \
 |---|---|
 | `--db_dir_name` | Path to the rollout dataset directory |
 | `--run_mode` | `train` to train, `eval` to evaluate |
-| `--model_type` | Model architecture (e.g., `wm_gru`) |
+| `--model_type` | Model architecture (`wm_gru` or `wm_vision_rssm`) |
 | `--model_dir_name` | Directory of the saved model checkpoint |
 | `--model_name` | Checkpoint filename (`.pth`) |
 

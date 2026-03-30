@@ -79,6 +79,10 @@ from typing import TYPE_CHECKING, Any, Optional, Protocol
 import os, json, sqlite3
 import numpy as np
 import torch
+try:
+  import mujoco
+except Exception:
+  mujoco = None
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnvCfg
@@ -192,10 +196,21 @@ class BaseViewer(ABC):
     self.local_buffer = []
     self.incremental_step = 0
     self.trajectory = []
-    self.buffer_size_d = 1000
-    self.transitions_per_trajectory = 1000
+    self.buffer_size_d = int(os.environ.get("ROLLOUT_NUM_TRAJECTORIES", "1000"))
+    self.transitions_per_trajectory = int(
+      os.environ.get("ROLLOUT_TRANSITIONS_PER_TRAJ", "1000")
+    )
     self.idx = 0
     self._replay_initial_state_set = False
+    self._rgbd_renderer = None
+    self._rgbd_enabled = False
+    self._rgbd_root_dir: Optional[str] = None
+    self._rgbd_camera_raw = os.environ.get("VISION_CAMERA", "").strip()
+    self._rgbd_camera: Optional[int | str] = None
+    self._printed_model_cameras = False
+    self._rgbd_width = int(os.environ.get("VISION_WIDTH", "256"))
+    self._rgbd_height = int(os.environ.get("VISION_HEIGHT", "256"))
+    self._rgbd_capture_every_n = max(1, int(os.environ.get("VISION_CAPTURE_EVERY_N", "1")))
     # change ends #
 
     # Action queue, drained on main thread each tick.
@@ -397,8 +412,102 @@ class BaseViewer(ABC):
     tgt_out = self._normalize_to_minus_one_one(target_actions, joint_pos_min, joint_pos_max)
     return st_out, tgt_out
 
+  def _init_rgbd_renderer(self, base_env) -> None:
+    if self._rgbd_enabled or self._rollout_output_dir is None:
+      return
+    if mujoco is None:
+      print("[WARN] mujoco Python package unavailable; RGB-D capture disabled.")
+      return
+    mjm = base_env.sim.mj_model
+    available_cameras = []
+    for i in range(mjm.ncam):
+      cam_name = mujoco.mj_id2name(mjm, mujoco.mjtObj.mjOBJ_CAMERA, i)
+      available_cameras.append((i, cam_name))
+    if not self._printed_model_cameras:
+      self._printed_model_cameras = True
+      print(f"[INFO] Available model cameras: {available_cameras}")
+    if mjm.ncam <= 0:
+      raise RuntimeError(
+        "Exocentric RGB-D capture requires at least one model camera. Found ncam=0."
+      )
 
-  def extract_observation_vectors(self, env, st, policy_at, ct, env_id=0):
+    selected_camera: int | str
+    if self._rgbd_camera_raw == "":
+      selected_camera = 0
+      print("[INFO] VISION_CAMERA not set. Defaulting to model camera index 0 (exocentric).")
+    else:
+      try:
+        cam_idx = int(self._rgbd_camera_raw)
+        if cam_idx == -1:
+          raise ValueError(
+            "VISION_CAMERA=-1 refers to the free/default viewer camera and is not exocentric."
+          )
+        if cam_idx < 0 or cam_idx >= mjm.ncam:
+          raise ValueError(
+            f"VISION_CAMERA index {cam_idx} is out of range [0, {mjm.ncam - 1}]"
+          )
+        selected_camera = cam_idx
+      except ValueError as exc:
+        if self._rgbd_camera_raw.isdigit() or self._rgbd_camera_raw.startswith("-"):
+          raise
+        valid_names = [name for _, name in available_cameras if name]
+        if self._rgbd_camera_raw not in valid_names:
+          raise ValueError(
+            f'VISION_CAMERA="{self._rgbd_camera_raw}" is not a valid model camera name. '
+            f"Valid names: {valid_names}"
+          ) from exc
+        selected_camera = self._rgbd_camera_raw
+    self._rgbd_camera = selected_camera
+    try:
+      self._rgbd_renderer = mujoco.Renderer(
+        mjm, width=self._rgbd_width, height=self._rgbd_height
+      )
+      self._rgbd_enabled = True
+      print(
+        f"[INFO] RGB-D capture enabled ({self._rgbd_width}x{self._rgbd_height}, camera={self._rgbd_camera!r})"
+      )
+    except Exception as exc:
+      self._rgbd_renderer = None
+      self._rgbd_enabled = False
+      raise RuntimeError(f"Failed to initialize RGB-D renderer: {exc}") from exc
+
+  def _capture_rgbd_frame(self, base_env):
+    if not self._rgbd_enabled or self._rgbd_renderer is None:
+      return None, None
+    try:
+      self._rgbd_renderer.update_scene(base_env.sim.mj_data, camera=self._rgbd_camera)
+      self._rgbd_renderer.disable_depth_rendering()
+      rgb = self._rgbd_renderer.render().copy()
+      self._rgbd_renderer.enable_depth_rendering()
+      depth = self._rgbd_renderer.render().copy().astype(np.float32)
+      self._rgbd_renderer.disable_depth_rendering()
+      return rgb, depth
+    except Exception as exc:
+      print(f"[WARN] RGB-D capture failed for current step: {exc}")
+      return None, None
+
+  def _save_rgbd_transition(self, rgb_t, depth_t, step_idx: int):
+    if self._rgbd_root_dir is None:
+      return None
+    active_traj_idx = self.trajectory_ctr + 1
+    traj_dir = os.path.join(self._rgbd_root_dir, f"trajectory_{active_traj_idx:05d}")
+    os.makedirs(traj_dir, exist_ok=True)
+
+    rgb_path = os.path.join(traj_dir, f"step_{step_idx:06d}_rgb.npy")
+    depth_path = os.path.join(traj_dir, f"step_{step_idx:06d}_depth.npy")
+
+    np.save(rgb_path, rgb_t)
+    np.save(depth_path, depth_t)
+
+    return {
+      "schema_version": 3,
+      "camera": self._rgbd_camera,
+      "step_idx_in_traj": int(step_idx),
+      "rgb_path": os.path.abspath(rgb_path),
+      "depth_path": os.path.abspath(depth_path),
+    }
+
+  def extract_observation_vectors(self, env, st, policy_at, ct, env_id=0, rgbd_record: Optional[dict] = None):
     """Extract [base_lin_vel, base_ang_vel, gravity_proj, joint_pos, joint_vel, joint_torque],
        [body_contact, foot_heights, foot_velocities], and target actions from current state.
 
@@ -471,10 +580,16 @@ class BaseViewer(ABC):
     tau_min,
     tau_max,)
 
-    self.local_buffer.append((st_n.tolist(), 
-                              ct.tolist(), 
-                              target_n.tolist(),
-                              policy_at.cpu().numpy().squeeze().tolist()))
+    transition = (
+      st_n.tolist(),
+      ct.tolist(),
+      target_n.tolist(),
+      policy_at.cpu().numpy().squeeze().tolist(),
+    )
+    if rgbd_record is not None:
+      transition = transition + (rgbd_record,)
+
+    self.local_buffer.append(transition)
 
     # return state_vec, contact_vec, target_actions
 
@@ -569,13 +684,25 @@ class BaseViewer(ABC):
         # change starts #
         st = self.get_state(base_env)
         ct = self.get_contact(base_env)
+        capture_this_step = ((self.incremental_step + 1) % self._rgbd_capture_every_n == 0)
+        rgb_t, depth_t = None, None
+        if capture_this_step:
+          self._init_rgbd_renderer(base_env)
+          rgb_t, depth_t = self._capture_rgbd_frame(base_env)
         # change ends
 
         self.env.step(actions)
 
         # change starts #
         self.incremental_step += 1
-        self.extract_observation_vectors(base_env, st=st, policy_at=actions, ct=ct)
+        rgbd_record = None
+        if capture_this_step and rgb_t is not None and depth_t is not None:
+          rgbd_record = self._save_rgbd_transition(
+            rgb_t, depth_t, step_idx=len(self.local_buffer)
+          )
+        self.extract_observation_vectors(
+          base_env, st=st, policy_at=actions, ct=ct, rgbd_record=rgbd_record
+        )
         if self.incremental_step % self.transitions_per_trajectory == 0 and self.incremental_step != 0:
             self.trajectory_ctr += 1
             self.save_trajectory()
@@ -700,7 +827,20 @@ class BaseViewer(ABC):
       folder_name = f"{n_transitions}_transitions"
       self._rollout_output_dir = os.path.join(db_dir, folder_name)
       os.makedirs(self._rollout_output_dir, exist_ok=True)
+      self._rgbd_root_dir = os.path.join(self._rollout_output_dir, "rgbd_frames")
+      os.makedirs(self._rgbd_root_dir, exist_ok=True)
       print(f"Per-trajectory rollouts directory: {self._rollout_output_dir}")
+      print(
+        "[INFO] Rollout settings | "
+        f"trajectories={self.buffer_size_d} "
+        f"transitions_per_traj={self.transitions_per_trajectory} "
+        f"total={n_transitions}"
+      )
+      print(
+        "[INFO] Vision capture settings | "
+        f"size={self._rgbd_width}x{self._rgbd_height} "
+        f"capture_every_n={self._rgbd_capture_every_n}"
+      )
     # change ends #
 
     self.setup()
@@ -713,6 +853,12 @@ class BaseViewer(ABC):
           time.sleep(0.001)
         self._update_stats()
     finally:
+      if self._rgbd_renderer is not None:
+        try:
+          self._rgbd_renderer.close()
+        except Exception:
+          pass
+        self._rgbd_renderer = None
       self.close()
 
   # Stats.

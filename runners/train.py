@@ -4,6 +4,7 @@ import torch
 from utils import SaveModel, CreateWorlModelInstance, get_model_name,\
                   count_parameters, SaveCkpt, LoadCkpt
 import time
+from data.preprocessor import load_vision_dataset
 
 # only state-action pair
 class Trainer:
@@ -22,9 +23,13 @@ class Trainer:
 
 
     def update(self, model_type, load_dataset):
+        if model_type == "wm_vision_rssm":
+            self.update_vision(model_type)
+            return
         
         # get data loader obj
         wt = self.config['world_model_training_params']
+        device = self.config["device"] if torch.cuda.is_available() else "cpu"
         db_paths = self.config.get('db_paths') or [self.config['db_path']]
         self.data_loader = load_dataset(
             db_paths=db_paths,
@@ -40,7 +45,7 @@ class Trainer:
         decay = self.config['world_model_training_params']['forecast_decay']
         state_dims = self.config['robot_params']['state_dims']
         action_dims = self.config['robot_params']['action_dims']
-        world_model = CreateWorlModelInstance(self.config)
+        world_model = CreateWorlModelInstance(self.config, model_type=model_type)
         world_model.train()
         print('World Model instantiated')
         # self.get_model_params(world_model)
@@ -70,9 +75,9 @@ class Trainer:
             for step, batch_st_ct_at in enumerate(self.data_loader):
                 ht = torch.zeros((self.config['world_model_arch_params']['num_gru_layers'], 
                                   batch_st_ct_at.shape[0], 
-                                  self.config['world_model_arch_params']['gru_hidden_dim'])).to(self.config['device'])
+                                  self.config['world_model_arch_params']['gru_hidden_dim'])).to(device)
                 
-                x = batch_st_ct_at.to(self.config["device"]) # x -> (bs, M+N, s_dim+a_dim)
+                x = batch_st_ct_at.to(device) # x -> (bs, M+N, s_dim+a_dim)
                 seq_len = x.shape[1]
                 batch_loss = 0
                 alpha = 1.0
@@ -131,6 +136,89 @@ class Trainer:
         
         ######################### Training Ends #########################
 
-# train, config, main, utils
+    def update_vision(self, model_type: str):
+        vt = self.config["vision_world_model_training_params"]
+        device = self.config["device"] if torch.cuda.is_available() else "cpu"
+        db_paths = self.config.get("db_paths") or [self.config["db_path"]]
+
+        self.data_loader = load_vision_dataset(
+            db_paths=db_paths,
+            batch_size=vt["batch_size"],
+            shuffle=True,
+            drop_last=True,
+            traj_cache_size=vt.get("traj_cache_size", 16),
+        )
+
+        world_model = CreateWorlModelInstance(self.config, model_type=model_type)
+        world_model.train()
+        print("Vision World Model instantiated")
+        count_parameters(world_model)
+
+        model_dir_name = get_model_name(model_type)
+        print("this is the model name : ", model_dir_name)
+
+        epochs = vt["epochs"]
+        depth_scale = vt.get("depth_scale", 50.0)
+        rgb_weight = vt.get("rgb_loss_weight", 1.0)
+        depth_weight = vt.get("depth_loss_weight", 1.0)
+        kl_weight = vt.get("kl_weight", 1e-4)
+
+        for epoch in range(1, epochs + 1):
+            epoch_loss = 0.0
+            epoch_rgb = 0.0
+            epoch_depth = 0.0
+            epoch_kl = 0.0
+            num_steps = 0
+            print(f"start of epoch {epoch}")
+
+            for batch in self.data_loader:
+                rgb_t = batch["rgb_t"].to(device).float()
+                depth_t = batch["depth_t"].to(device).float() / depth_scale
+                action_t = batch["action_t"].to(device).float()
+                rgb_t1 = batch["rgb_t1"].to(device).float()
+                depth_t1 = batch["depth_t1"].to(device).float() / depth_scale
+
+                outputs = world_model(
+                    rgb_t=rgb_t,
+                    depth_t=depth_t,
+                    action_t=action_t,
+                    rgb_t1=rgb_t1,
+                    depth_t1=depth_t1,
+                )
+                losses = world_model.compute_loss(
+                    outputs=outputs,
+                    rgb_t1=rgb_t1,
+                    depth_t1=depth_t1,
+                    kl_weight=kl_weight,
+                    rgb_weight=rgb_weight,
+                    depth_weight=depth_weight,
+                )
+                total_loss = losses["total_loss"]
+
+                world_model.optimizer.zero_grad()
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(world_model.parameters(), vt.get("grad_clip_norm", 10.0))
+                world_model.optimizer.step()
+
+                epoch_loss += total_loss.item()
+                epoch_rgb += float(losses["rgb_loss"])
+                epoch_depth += float(losses["depth_loss"])
+                epoch_kl += float(losses["kl_loss"])
+                num_steps += 1
+
+            if num_steps > 0:
+                print(
+                    "epoch metrics | "
+                    f"total={epoch_loss / num_steps:.6f} "
+                    f"rgb={epoch_rgb / num_steps:.6f} "
+                    f"depth={epoch_depth / num_steps:.6f} "
+                    f"kl={epoch_kl / num_steps:.6f}"
+                )
+            print(f"end of epoch {epoch}\n\n")
+
+            if epoch % self.config["save_freq"] == 0:
+                model_name = f"{model_type}-epoch_{epoch}.pth"
+                SaveModel(world_model, model_name, model_dir_name)
+
 
     

@@ -3,28 +3,51 @@ import os, json
 import numpy as np
 import torch
 from models.world_model import RandomWorldStepGru
-import matplotlib.pyplot as plt
+from models.vision_world_model import VisionRssmWorldModel
 from datetime import datetime
+try:
+    import matplotlib.pyplot as plt
+except Exception:
+    plt = None
 
 def get_model_name(model_type):
     string_date_time = "_".join(str(datetime.now()).split(".")[0].split(" "))
     model_name = model_type + "_" + string_date_time
     return model_name
 
-def CreateWorlModelInstance(config):
-    world_model = RandomWorldStepGru(batch_size=config['world_model_training_params']['batch_size'],
-                                    state_dim=config['robot_params']['state_dims'],
-                                    contact_dim=config['robot_params']['contact_dims'],
-                                    action_dim=config['robot_params']['action_dims'],
-                                    embed_dim=config['world_model_arch_params']['embed_dim'],
-                                    hidden_dim=config['world_model_arch_params']['gru_hidden_dim'],
-                                    num_gru_layers=config['world_model_arch_params']['num_gru_layers'],
-                                    mlp_dim=config['world_model_arch_params']['mlp_head_dim'],
-                                    lr=config['world_model_training_params']['learning_rate'],
-                                    weight_decay=config['world_model_training_params']['weight_decay'],
-                                    device=config['device'])
+def CreateWorlModelInstance(config, model_type: str = "wm_gru"):
+    if model_type == "wm_gru":
+        world_model = RandomWorldStepGru(batch_size=config['world_model_training_params']['batch_size'],
+                                        state_dim=config['robot_params']['state_dims'],
+                                        contact_dim=config['robot_params']['contact_dims'],
+                                        action_dim=config['robot_params']['action_dims'],
+                                        embed_dim=config['world_model_arch_params']['embed_dim'],
+                                        hidden_dim=config['world_model_arch_params']['gru_hidden_dim'],
+                                        num_gru_layers=config['world_model_arch_params']['num_gru_layers'],
+                                        mlp_dim=config['world_model_arch_params']['mlp_head_dim'],
+                                        lr=config['world_model_training_params']['learning_rate'],
+                                        weight_decay=config['world_model_training_params']['weight_decay'],
+                                        device=config['device'])
+        return world_model
 
-    return world_model
+    if model_type == "wm_vision_rssm":
+        vp = config["vision_world_model_arch_params"]
+        vt = config["vision_world_model_training_params"]
+        world_model = VisionRssmWorldModel(
+            action_dim=config["robot_params"]["action_dims"],
+            image_height=vp["image_height"],
+            image_width=vp["image_width"],
+            cnn_embed_dim=vp["cnn_embed_dim"],
+            action_embed_dim=vp["action_embed_dim"],
+            latent_dim=vp["latent_dim"],
+            hidden_dim=vp["hidden_dim"],
+            lr=vt["learning_rate"],
+            weight_decay=vt["weight_decay"],
+            device=config["device"],
+        )
+        return world_model
+
+    raise ValueError(f"Unsupported model_type: {model_type}")
 
 
 
@@ -117,6 +140,8 @@ def count_parameters(model):
 
 def save_plot_figure(fig, model_dir_name: str, filename: str, dpi: int = 150):
     """Write ``fig`` to ``logs/plots/{model_dir_name}/{filename}`` (adds .png if no extension)."""
+    if plt is None:
+        raise ImportError("matplotlib is required for plotting. Install matplotlib to save figures.")
     _, plots_dir = create_runs_dir(model_dir_name)
     if not any(filename.lower().endswith(ext) for ext in (".png", ".pdf", ".svg")):
         filename = f"{filename}.png"
@@ -128,6 +153,8 @@ def save_plot_figure(fig, model_dir_name: str, filename: str, dpi: int = 150):
 def plot_graphs(lin_vel_true, lin_vel_preds, ang_vel_true, 
                 ang_vel_preds, true_joints, pred_joints, 
                 M, model_dir_name, model_name, not_all_joints=True):
+    if plt is None:
+        raise ImportError("matplotlib is required for plotting. Install matplotlib to use eval plots.")
     
     lin_vel_x, lin_vel_y, lin_vel_z = lin_vel_true
     lin_vel_x_pred, lin_vel_y_pred, lin_vel_z_pred = lin_vel_preds

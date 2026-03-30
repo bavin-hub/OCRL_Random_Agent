@@ -234,3 +234,193 @@ def load_dataset(
             return batch
 
     return data_loader
+
+
+def _extract_trajectory_from_blob(blob: dict):
+    if "trajectory-1" in blob:
+        return blob["trajectory-1"]
+    traj_keys = sorted(k for k in blob.keys() if k.startswith("trajectory-"))
+    if not traj_keys:
+        raise KeyError(f"No trajectory-* keys found in DB row. Keys: {list(blob.keys())}")
+    return blob[traj_keys[0]]
+
+
+def _extract_rgbd_record(transition):
+    if not isinstance(transition, (list, tuple)):
+        return None
+    if len(transition) < 5:
+        return None
+    meta = transition[4]
+    if not isinstance(meta, dict):
+        return None
+    if ("rgb_t_path" in meta and "depth_t_path" in meta and "rgb_t1_path" in meta and "depth_t1_path" in meta):
+        return meta
+    if ("rgb_path" in meta and "depth_path" in meta):
+        return meta
+    return None
+
+
+def _as_chw_rgb(rgb: np.ndarray) -> np.ndarray:
+    rgb = np.asarray(rgb)
+    if rgb.ndim == 3 and rgb.shape[-1] == 3:
+        rgb = np.transpose(rgb, (2, 0, 1))
+    if rgb.ndim != 3 or rgb.shape[0] != 3:
+        raise ValueError(f"Unexpected RGB shape: {rgb.shape}")
+    rgb = rgb.astype(np.float32)
+    if rgb.max() > 1.0:
+        rgb /= 255.0
+    return rgb
+
+
+def _as_chw_depth(depth: np.ndarray) -> np.ndarray:
+    depth = np.asarray(depth)
+    if depth.ndim == 2:
+        depth = depth[None, :, :]
+    elif depth.ndim == 3 and depth.shape[-1] == 1:
+        depth = np.transpose(depth, (2, 0, 1))
+    if depth.ndim != 3 or depth.shape[0] != 1:
+        raise ValueError(f"Unexpected depth shape: {depth.shape}")
+    return depth.astype(np.float32)
+
+
+class VisionTransitionDataset(Dataset):
+    """Loads one-step visual transitions from rollout DBs.
+
+    Expected transition layout per step:
+      (state, contact, target_action, policy_action, rgbd_record)
+    where rgbd_record is a dict containing *_path entries.
+    """
+
+    def __init__(self, db_path: str = None, db_paths=None, traj_cache_size: int = 16):
+        self.db_paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
+        self._traj_cache = OrderedDict()
+        self._traj_cache_limit = max(1, int(traj_cache_size))
+        self._sources = []  # (db_file, rowid)
+        self._index = []    # (source_idx, step_idx_t, step_idx_t1, mode)
+
+        for db_file in self.db_paths:
+            if "combined" in os.path.basename(db_file):
+                continue
+            conn = sqlite3.connect(db_file)
+            try:
+                cur = conn.cursor()
+                rows = cur.execute("SELECT rowid, * FROM PretrainingData ORDER BY rowid").fetchall()
+                for row in rows:
+                    rowid = row[0]
+                    payload = row[1]
+                    blob = json.loads(payload)
+                    traj = _extract_trajectory_from_blob(blob)
+                    source_idx = len(self._sources)
+                    self._sources.append((db_file, rowid))
+
+                    # Backward-compatible support for old schema that stores direct t->t+1 paths.
+                    direct_added = 0
+                    for i, transition in enumerate(traj):
+                        meta = _extract_rgbd_record(transition)
+                        if meta is None:
+                            continue
+                        if all(k in meta for k in ("rgb_t_path", "depth_t_path", "rgb_t1_path", "depth_t1_path")):
+                            self._index.append((source_idx, i, i, "direct"))
+                            direct_added += 1
+
+                    if direct_added > 0:
+                        continue
+
+                    # New schema: store only current obs, pair step t with t+1 within trajectory.
+                    current_steps = []
+                    for i, transition in enumerate(traj):
+                        meta = _extract_rgbd_record(transition)
+                        if meta is None:
+                            continue
+                        if all(k in meta for k in ("rgb_path", "depth_path")):
+                            current_steps.append(i)
+                    current_set = set(current_steps)
+                    for i in current_steps:
+                        j = i + 1
+                        if j in current_set:
+                            self._index.append((source_idx, i, j, "pair"))
+            finally:
+                conn.close()
+
+        if not self._index:
+            raise ValueError(
+                "No compatible visual transitions found. "
+                "For schema v3, collect with VISION_CAPTURE_EVERY_N=1 so step t can pair with t+1."
+            )
+
+    def __len__(self):
+        return len(self._index)
+
+    def _evict_cache_if_needed(self):
+        while len(self._traj_cache) > self._traj_cache_limit:
+            self._traj_cache.popitem(last=False)
+
+    def _load_trajectory(self, source_idx: int):
+        db_file, rowid = self._sources[source_idx]
+        conn = sqlite3.connect(db_file)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM PretrainingData WHERE rowid = ?", (rowid,))
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError(f"Missing rowid={rowid} in {db_file}")
+            payload = row[0]
+            blob = json.loads(payload)
+            return _extract_trajectory_from_blob(blob)
+        finally:
+            conn.close()
+
+    def _get_trajectory_cached(self, source_idx: int):
+        if source_idx in self._traj_cache:
+            self._traj_cache.move_to_end(source_idx)
+            return self._traj_cache[source_idx]
+        traj = self._load_trajectory(source_idx)
+        self._traj_cache[source_idx] = traj
+        self._evict_cache_if_needed()
+        return traj
+
+    def __getitem__(self, index):
+        source_idx, step_idx_t, step_idx_t1, mode = self._index[int(index)]
+        traj = self._get_trajectory_cached(source_idx)
+        transition_t = traj[step_idx_t]
+        meta_t = _extract_rgbd_record(transition_t)
+        if meta_t is None:
+            raise ValueError(f"Missing RGB-D record for transition index {index}")
+        if mode == "direct":
+            rgb_t = _as_chw_rgb(np.load(meta_t["rgb_t_path"]))
+            depth_t = _as_chw_depth(np.load(meta_t["depth_t_path"]))
+            rgb_t1 = _as_chw_rgb(np.load(meta_t["rgb_t1_path"]))
+            depth_t1 = _as_chw_depth(np.load(meta_t["depth_t1_path"]))
+        elif mode == "pair":
+            transition_t1 = traj[step_idx_t1]
+            meta_t1 = _extract_rgbd_record(transition_t1)
+            if meta_t1 is None:
+                raise ValueError(f"Missing next-step RGB-D record for transition index {index}")
+            rgb_t = _as_chw_rgb(np.load(meta_t["rgb_path"]))
+            depth_t = _as_chw_depth(np.load(meta_t["depth_path"]))
+            rgb_t1 = _as_chw_rgb(np.load(meta_t1["rgb_path"]))
+            depth_t1 = _as_chw_depth(np.load(meta_t1["depth_path"]))
+        else:
+            raise ValueError(f"Unknown vision index mode: {mode}")
+        action_t = np.asarray(transition_t[3], dtype=np.float32)
+
+        return {
+            "rgb_t": rgb_t,
+            "depth_t": depth_t,
+            "action_t": action_t,
+            "rgb_t1": rgb_t1,
+            "depth_t1": depth_t1,
+        }
+
+
+def load_vision_dataset(
+    db_path: str = None,
+    db_paths=None,
+    batch_size: int = 64,
+    shuffle: bool = True,
+    drop_last: bool = True,
+    traj_cache_size: int = 16,
+):
+    paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
+    dataset = VisionTransitionDataset(db_paths=paths, traj_cache_size=traj_cache_size)
+    return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)

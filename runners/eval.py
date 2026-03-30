@@ -1,12 +1,11 @@
-from models.world_model import RandomWorldStepGru
 import json, time
 from tqdm.notebook import trange, tqdm
 from utils import LoadModel, CreateWorlModelInstance, plot_graphs
-import matplotlib.pyplot as plt
 import torch
 import numpy as np 
 import random
 from itertools import chain
+from data.preprocessor import load_vision_dataset
 
 
 
@@ -180,6 +179,9 @@ class Inference:
 
 
     def evaluate(self, model_type: str, load_dataset):
+        if model_type == "wm_vision_rssm":
+            self.evaluate_vision(model_type)
+            return
         
         M = self.config['world_model_training_params']['M']
         N = self.config['world_model_training_params']['N_pred']
@@ -222,7 +224,7 @@ class Inference:
         # load model
         model_name = self.config["model_name"]
         model_dir_name = self.config["model_dir_name"]
-        world_model = CreateWorlModelInstance(self.config)
+        world_model = CreateWorlModelInstance(self.config, model_type=model_type)
         world_model_loaded = LoadModel(world_model, model_name, model_dir_name)
 
         # generate trajectory for world model
@@ -335,6 +337,49 @@ class Inference:
                     M=M,
                     model_dir_name=model_dir_name,
                     model_name=model_name)
+
+    def evaluate_vision(self, model_type: str):
+        vt = self.config["vision_world_model_training_params"]
+        device = self.config["device"] if torch.cuda.is_available() else "cpu"
+        db_paths = self.config.get("db_paths") or [self.config["db_path"]]
+
+        data_loader = load_vision_dataset(
+            db_paths=db_paths,
+            batch_size=vt.get("eval_batch_size", 32),
+            shuffle=False,
+            drop_last=False,
+            traj_cache_size=vt.get("traj_cache_size", 16),
+        )
+        batch = next(iter(data_loader))
+        rgb_t = batch["rgb_t"].to(device).float()
+        depth_t = batch["depth_t"].to(device).float() / vt.get("depth_scale", 50.0)
+        action_t = batch["action_t"].to(device).float()
+        rgb_t1 = batch["rgb_t1"].to(device).float()
+        depth_t1 = batch["depth_t1"].to(device).float() / vt.get("depth_scale", 50.0)
+
+        model_name = self.config["model_name"]
+        model_dir_name = self.config["model_dir_name"]
+        world_model = CreateWorlModelInstance(self.config, model_type=model_type)
+        world_model = LoadModel(world_model, model_name, model_dir_name)
+        world_model.eval()
+
+        with torch.no_grad():
+            outputs = world_model(
+                rgb_t=rgb_t, depth_t=depth_t, action_t=action_t, rgb_t1=rgb_t1, depth_t1=depth_t1
+            )
+            losses = world_model.compute_loss(
+                outputs=outputs,
+                rgb_t1=rgb_t1,
+                depth_t1=depth_t1,
+                kl_weight=vt.get("kl_weight", 1e-4),
+                rgb_weight=vt.get("rgb_loss_weight", 1.0),
+                depth_weight=vt.get("depth_loss_weight", 1.0),
+            )
+        print("Vision eval batch metrics:")
+        print(f"total_loss={float(losses['total_loss']):.6f}")
+        print(f"rgb_loss={float(losses['rgb_loss']):.6f}")
+        print(f"depth_loss={float(losses['depth_loss']):.6f}")
+        print(f"kl_loss={float(losses['kl_loss']):.6f}")
 
         
 
