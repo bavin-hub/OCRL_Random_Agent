@@ -1,20 +1,3 @@
-"""Unitree G1 constants plus a ground plane for standalone viewing/simulation.
-
-This module re-exports everything from :mod:`g1_constants` and adds helpers that
-build a full mjlab :class:`~mjlab.scene.scene.Scene` with flat terrain, matching
-how training environments attach the robot to a plane (so feet collide instead of
-falling through empty space).
-
-Run the viewer (with physics and ground contact)::
-
-  python -m mjlab.asset_zoo.robots.unitree_g1.g1_with_ground
-
-You can also run this file directly (uses absolute imports so it is not limited
-to ``python -m``)::
-
-  python /path/to/g1_with_ground.py
-"""
-
 from __future__ import annotations
 
 import mujoco
