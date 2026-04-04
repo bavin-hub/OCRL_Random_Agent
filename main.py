@@ -8,6 +8,8 @@ parser.add_argument('--model_type', default='wm_gru', help='pass in the model ty
 parser.add_argument('--run_mode', default='train', help='pass in the run mode')
 parser.add_argument('--model_dir_name', default='', help="pass in the model dir name")
 parser.add_argument("--model_name", default="", help="pass in the model name")
+parser.add_argument("--load_ckpts_dir", default="", help="pass in the ckpts dir name")
+parser.add_argument("--ckpt_name", default="", help="pass in the ckpt name")
 parser.add_argument(
     '--db_dir_name',
     default='pretraining_rollouts',
@@ -25,6 +27,21 @@ def run(args):
         file.close()
     except:
         raise FileNotFoundError("'config.json' file not found in the current dir")
+    
+    # populate ckpt in the config
+    if args.run_mode == "train":
+        if args.load_ckpts_dir != "" and args.ckpt_name == "":
+            raise ValueError("ckpt name is not passed")
+        if args.load_ckpts_dir == "" and args.ckpt_name != "":
+            raise ValueError("ckpts dir is not passes")
+        
+        if args.load_ckpts_dir != "" and args.ckpt_name != "":
+            config["use_ckpt"] = True
+            config["ckpt_dir"] = args.load_ckpts_dir
+            config["ckpt_name"] = args.ckpt_name
+
+        else:
+            config["use_ckpt"] = False
     
     # check if model dir name is passed
     if args.run_mode == "eval": 
