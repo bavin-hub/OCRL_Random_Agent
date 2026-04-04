@@ -39,12 +39,17 @@ def create_runs_dir(model_dir_name):
         print('Creating plots directory')
         os.makedirs(plots_dir)
 
-    return models_dir, plots_dir
+    ckpts_dir = os.path.join(os.path.join(os.getcwd(), f"logs/ckpts/{model_dir_name}"))
+    if not os.path.isdir(ckpts_dir):
+        print("Creating ckpts dir")
+        os.makedirs(ckpts_dir)
+
+    return models_dir, plots_dir, ckpts_dir
 
 
 
 def SaveModel(model_obj, model_name, model_dir_name):
-    save_dir, _ = create_runs_dir(model_dir_name)
+    save_dir, _, _ = create_runs_dir(model_dir_name)
     model_dir = os.path.join(save_dir, model_name)
     torch.save(model_obj.state_dict(), model_dir)
     print("\n#########")
@@ -53,13 +58,45 @@ def SaveModel(model_obj, model_name, model_dir_name):
 
 
 def LoadModel(model_obj, model_name, model_dir_name):
-    load_dir, _ = create_runs_dir(model_dir_name)
+    load_dir, _, _ = create_runs_dir(model_dir_name)
     model_dir = os.path.join(load_dir, model_name)
     model_obj.load_state_dict(torch.load(model_dir, weights_only=True))
     print("\n#########")
     print("Model Loaded")
     print("#########\n")
     return model_obj
+
+
+def SaveCkpt(model_obj, model_name, model_dir_name, current_epoch, current_loss):
+    _, _, ckpt_dir = create_runs_dir(model_dir_name)
+    ckpt_dir = os.path.join(ckpt_dir, model_name)
+
+    checkpoint = {"model_state_dict": model_obj.state_dict(),
+                  "optimizer_state_dict": model_obj.optimizer.state_dict(),
+                  "epoch":current_epoch,
+                  "loss":current_loss}
+    torch.save(checkpoint, ckpt_dir)
+    print("\n\n#########")
+    print("Checkpoint saved")
+    print("#########\n")
+
+
+def LoadCkpt(model_obj, model_name, model_dir_name):
+    _, _, ckpt_dir = create_runs_dir(model_dir_name)
+    ckpt_dir = os.path.join(ckpt_dir, model_name)
+
+    checkpoints = torch.load(ckpt_dir)
+
+    model_obj.load_state_dict(checkpoints["model_state_dict"])
+    model_obj.optimizer.load_state_dict(checkpoints["optimizer_state_dict"])
+    model_obj.train()
+    print("\n\n#########")
+    print("Checkpoint loaded")
+    print("#########\n")
+    return model_obj
+
+
+
 
 
 def count_parameters(model):

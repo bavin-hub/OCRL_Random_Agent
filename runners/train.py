@@ -1,7 +1,8 @@
 import json, time
 from tqdm.notebook import trange, tqdm
 import torch
-from utils import SaveModel, CreateWorlModelInstance, get_model_name, count_parameters
+from utils import SaveModel, CreateWorlModelInstance, get_model_name,\
+                  count_parameters, SaveCkpt, LoadCkpt
 import time
 
 # only state-action pair
@@ -51,6 +52,13 @@ class Trainer:
         print('this is the model name : ', model_dir_name)
 
 
+        # load checkpoints
+        if self.config["use_ckpt"]:
+            world_model = LoadCkpt(world_model,
+                                   self.config["ckpt_name"],
+                                   self.config["ckpt_dir"]) 
+
+
 
         ######################### Training Starts #########################
 
@@ -58,6 +66,7 @@ class Trainer:
         for epoch in range(1, self.config['world_model_training_params']['epochs']+1):
             print(f'start of epoch {epoch}')
             # Iterate over batches
+            epoch_loss = 0.0
             for step, batch_st_ct_at in enumerate(self.data_loader):
                 ht = torch.zeros((self.config['world_model_arch_params']['num_gru_layers'], 
                                   batch_st_ct_at.shape[0], 
@@ -100,7 +109,8 @@ class Trainer:
                 world_model.optimizer.zero_grad()
                 batch_loss.backward()
                 world_model.optimizer.step()
-                
+
+                epoch_loss += batch_loss
                 training_loss.append(batch_loss.item())
                 # print(f'Loss at step {step} : {batch_loss.item()}')
 
@@ -108,11 +118,19 @@ class Trainer:
             print(f'end of epoch {epoch}\n\n')
             
             # save model
-            if epoch % self.config["save_freq"] == 0:
+            if epoch % self.config["model_save_freq"] == 0:
                 model_name = f'{model_type}-epoch_{epoch}.pth'
                 SaveModel(world_model, model_name, model_dir_name)
+
+            # save checkpoint
+            if epoch % self.config["ckpt_save_freq"] == 0:
+                model_name = f"{model_type}-ckpt-epoch_{epoch}.pth"
+                SaveCkpt(world_model, model_name, model_dir_name, epoch, epoch_loss)
+
+
         
         ######################### Training Ends #########################
 
+# train, config, main, utils
 
     
