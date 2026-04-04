@@ -169,7 +169,7 @@ class BaseViewer(ABC):
     self._last_error: str | None = None
 
     # Speed.
-    self._speed_index = self.SPEED_MULTIPLIERS.index(1.0)
+    self._speed_index = self.SPEED_MULTIPLIERS.index(8.0)
     self._time_multiplier = self.SPEED_MULTIPLIERS[self._speed_index]
 
     # Physics accumulator and render timer.
@@ -344,9 +344,6 @@ class BaseViewer(ABC):
       raise ValueError("bound must be positive")
     return np.clip(x / bound, -1.0, 1.0)
 
-    
-
-
   def normalize_st_and_target_actions(
     self,
     st: np.ndarray,
@@ -398,7 +395,23 @@ class BaseViewer(ABC):
     return st_out, tgt_out
 
 
-  def extract_observation_vectors(self, env, st, policy_at, ct, env_id=0):
+  def normalize_policy_vec(self, command: np.ndarray, base_lin_vel_limit: float) -> np.ndarray:
+    """
+    Normalize the velocity command vector.
+
+    Args:
+        command (np.ndarray): shape (3,) velocity command
+        base_lin_vel_limit (float): max absolute linear velocity
+
+    Returns:
+        np.ndarray: normalized velocity command
+    """
+    # Normalize each component (symmetric around 0)
+    command_n = self._normalize_symmetric(command, base_lin_vel_limit)
+
+    return command_n  # shape (3,)
+  
+  def extract_observation_vectors(self, env, st, policy_at, ct, command, env_id=0):
     """Extract [base_lin_vel, base_ang_vel, gravity_proj, joint_pos, joint_vel, joint_torque],
        [body_contact, foot_heights, foot_velocities], and target actions from current state.
 
@@ -452,8 +465,9 @@ class BaseViewer(ABC):
     # print(policy_at.cpu().numpy().squeeze().shape)
 
     # print('\n\nafter step : ', target_actions)
-
-
+    
+    policy_vec = command
+    
     # normalize state and target actions
     jmin = robot.data.joint_pos_limits[env_id].cpu().numpy()[:, 0]   # or soft_joint_pos_limits[..., 0]
     jmax = robot.data.joint_pos_limits[env_id].cpu().numpy()[:, 1]   # or soft_joint_pos_limits[..., 1]
@@ -471,14 +485,22 @@ class BaseViewer(ABC):
     tau_min,
     tau_max,)
 
-    self.local_buffer.append((st_n.tolist(), 
-                              ct.tolist(), 
-                              target_n.tolist(),
-                              policy_at.cpu().numpy().squeeze().tolist()))
+    policy_vec_n = self.normalize_policy_vec(
+        policy_vec,
+        base_lin_vel_limit=6.0,
+    )
+
+    # Append to buffer
+    self.local_buffer.append((
+        st_n.tolist(),
+        contact_vec.tolist(),  # use the newly computed contact vector
+        target_n.tolist(),
+        policy_at.cpu().numpy().squeeze().tolist(),
+        policy_vec_n.tolist()
+    ))
 
     # return state_vec, contact_vec, target_actions
-
-
+    
   # Core loop.
 
   def get_state(self, env):
@@ -569,13 +591,20 @@ class BaseViewer(ABC):
         # change starts #
         st = self.get_state(base_env)
         ct = self.get_contact(base_env)
-        # change ends
+        critic_obs = obs["critic"]  # shape: [1, 113]
+
+        # Extract command (3D vector)
+        command = critic_obs[:, 6:9]  # shape: [1, 3]
+
+        # If you want as numpy array
+        command_np = command.cpu().numpy().squeeze(0)  # shape: (3,)
+                # change ends
 
         self.env.step(actions)
 
         # change starts #
         self.incremental_step += 1
-        self.extract_observation_vectors(base_env, st=st, policy_at=actions, ct=ct)
+        self.extract_observation_vectors(base_env, st=st, policy_at=actions, ct=ct, command=command_np)
         if self.incremental_step % self.transitions_per_trajectory == 0 and self.incremental_step != 0:
             self.trajectory_ctr += 1
             self.save_trajectory()
@@ -770,3 +799,4 @@ class BaseViewer(ABC):
       capped=self._was_capped,
       last_error=self._last_error,
     )
+
