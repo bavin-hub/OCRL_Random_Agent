@@ -1,5 +1,6 @@
 from runners.agent import Agent
-import json, argparse, time, os
+import json, argparse, time, os, sqlite3
+from typing import List
 
 
 # define arguments to parse (should also put the allowed values in the help)
@@ -15,6 +16,53 @@ parser.add_argument(
     default='pretraining_rollouts',
     help='Subfolder under data/ containing rollout .db files (e.g. 1000000_transitions)',
 )
+
+
+
+def combine_trajectories(transitions_path: str):
+
+    def get_all_rows_per_db(db_path: str):
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        query = '''SELECT * From PretrainingData'''
+        cursor.execute(query)
+
+        rows = cursor.fetchall()
+        return rows
+    
+    def save_mergerd_transitions(save_path: str, merged_rows: List, 
+                             db_name: str = "combined_transitions.db"):
+        save_path = os.path.join(save_path, db_name)
+        conn = sqlite3.connect(save_path)
+        cursor = conn.cursor()
+
+        create_table_query = f"""
+            CREATE TABLE IF NOT EXISTS PretrainingData (
+            trajectories TEXT
+            )
+            """
+        cursor.execute(create_table_query)
+
+
+        cursor.executemany("INSERT INTO PretrainingData (trajectories) VALUES (?)", merged_rows)
+        conn.commit()
+        print("Saved all trajectories into one db")
+
+
+    all_transitions_path = os.path.join(os.getcwd(), f"data/{transitions_path}")
+    all_transition_dbs = os.listdir(all_transitions_path)
+    combined_transitions = []
+    for file in all_transition_dbs:
+        db_path = os.path.join(all_transitions_path, file)
+        # print(db_path)
+        all_rows_single_db = get_all_rows_per_db(db_path)
+        
+        combined_transitions += all_rows_single_db
+
+
+    save_mergerd_transitions(all_transitions_path,
+                         combined_transitions)
 
 
 
@@ -68,6 +116,11 @@ def run(args):
 
     if not db_paths:
         raise FileNotFoundError(f"No .db files in {db_base}")
+    
+    # create combined trajectories
+    combine_trajectories(args.db_dir_name)
+    print("Created combined transitions db")
+
     config['db_base_dir'] = os.path.abspath(db_base)
     config['db_paths'] = [os.path.abspath(p) for p in db_paths]
     config['db_path'] = config['db_paths'][0]
