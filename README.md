@@ -56,6 +56,10 @@ For the full step-by-step setup guide, see **[setup.md](setup.md)**.
 
 ## 🌐 World Model
 
+> [[https://drive.google.com/file/d/1yV5Nhvdgugw56TS_FYcb-22JIRg18YL_/view?usp=drive_link](https://drive.google.com/file/d/1Rq4SQsoPI4--GKzydMWmZSiU5RhmsEal/view?usp=drive_link)](https://drive.google.com/file/d/1k5_xXgBoZawTuDTJQVX830jfOdXy6Xoq/view?usp=drive_link)
+
+#### Place the above model weights under logs/saved_models
+
 ### Train
 
 Train the GRU-based world model on prerecorded transition data:
