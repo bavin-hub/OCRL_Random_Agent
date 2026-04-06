@@ -536,7 +536,7 @@ class BaseViewer(ABC):
     contact_vec = np.concatenate([body_contact, foot_heights, foot_velocities], axis=-1)
     return contact_vec
 
-  # change ends #
+  # change ends # 
 
   # Core loop.
 
