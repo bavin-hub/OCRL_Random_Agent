@@ -192,7 +192,7 @@ class BaseViewer(ABC):
     self.local_buffer = []
     self.incremental_step = 0
     self.trajectory = []
-    self.buffer_size_d = 1000
+    self.buffer_size_d = 50
     self.transitions_per_trajectory = 1000
     self.idx = 0
     self._replay_initial_state_set = False
@@ -356,10 +356,10 @@ class BaseViewer(ABC):
     tau_min: np.ndarray,
     tau_max: np.ndarray,
     *,
-    base_lin_vel_limit: float = 6.0,
-    base_ang_vel_limit: float = 12.0,
+    base_lin_vel_limit: float = 4.0,
+    base_ang_vel_limit: float = 10.0,
     gravity_limit: float = 9.81,
-    joint_vel_limit: float = 20.0,
+    joint_vel_limit: float = 15.0,
   ) -> tuple[np.ndarray, np.ndarray]:
     """Scale `st` and `target_actions` to approximately [-1, 1].
     `st` layout: base_lin_vel(3), base_ang_vel(3), gravity_proj(3),
@@ -471,9 +471,13 @@ class BaseViewer(ABC):
     tau_min,
     tau_max,)
 
-    self.local_buffer.append((st_n.tolist(), 
+    # self.local_buffer.append((st_n.tolist(), 
+    #                           ct.tolist(), 
+    #                           target_n.tolist(),
+    #                           policy_at.cpu().numpy().squeeze().tolist()))
+    self.local_buffer.append((st.tolist(), 
                               ct.tolist(), 
-                              target_n.tolist(),
+                              target_actions.tolist(),
                               policy_at.cpu().numpy().squeeze().tolist()))
 
     # return state_vec, contact_vec, target_actions

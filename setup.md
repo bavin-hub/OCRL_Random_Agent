@@ -119,9 +119,8 @@ sudo rm -rf ${PWD}/data/pretraining_rollouts/1000000_transitions.zip
 1. Copy the `base.py` and `play` viewer file into the mjlab package:
 
 ```bash
-cp ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/viewer/base.py ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/viewer/base_copy.py
-cp base.py ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/viewer/
 cp play.py data/baseline_policies/unitree_rl_mjlab/scripts/
+cp base.py ~/miniconda3/envs/random_agent/lib/python3.11/site-packages/mjlab/viewer/
 ```
 
 2. Run the [test baseline policy](#42-test-baseline-policy) command — rollouts will be saved automatically to `data/pretraining_rollouts/`.

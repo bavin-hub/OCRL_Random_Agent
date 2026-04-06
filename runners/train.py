@@ -32,7 +32,9 @@ class Trainer:
             M=wt['M'],
             N=wt['N'],
             combined_db_path=self.config.get("combined_db_path"),
-            run_mode=self.config.get("run_mode")
+            run_mode=self.config.get("run_mode"),
+            mean=self.config.get("mean_state_action"),
+            std=self.config.get("std_state_action")
         )
 
         # create model instance
@@ -86,20 +88,20 @@ class Trainer:
                         if t == M-1:
                             x_prev = torch.unsqueeze(x[:, t, :96], dim=1)
                             # std_logits, state_mean
-                            st_next_pred, ht, std_logits, state_mean = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
+                            st_next_pred, ht = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
                         else:
-                            st_next_pred, ht, std_logits, state_mean = world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -action_dims:], dim=1)), dim=2), 
+                            st_next_pred, ht = world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -action_dims:], dim=1)), dim=2), 
                                                                                  ht, predict=True, x_prev=st_next_pred)
                         target = torch.unsqueeze(x[:, t+1, :state_dims], dim=1)
                         # loss_t = world_model.nll_loss(dist, target)
                         # print(st_next_pred.shape)
                         # print(target.shape)
                         # print("\n")
-                        # loss_t = world_model.mse_loss(st_pred=torch.squeeze(st_next_pred, dim=1),
-                        #                               st_true=torch.squeeze(target, dim=1))
-                        loss_t = world_model.gnll_loss(state_mean=state_mean,
-                                                       state_std=std_logits,
-                                                       state_target=target)
+                        loss_t = world_model.mse_loss(st_pred=torch.squeeze(st_next_pred, dim=1),
+                                                      st_true=torch.squeeze(target, dim=1))
+                        # loss_t = world_model.gnll_loss(state_mean=state_mean,
+                        #                                state_std=std_logits,
+                        #                                state_target=target)
                         batch_loss += alpha * loss_t
                         alpha *= decay
                 
@@ -131,6 +133,5 @@ class Trainer:
         
         ######################### Training Ends #########################
 
-# train, config, main, utils
 
     

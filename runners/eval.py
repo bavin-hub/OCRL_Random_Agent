@@ -1,7 +1,7 @@
 from models.world_model import RandomWorldStepGru
 import json, time
 from tqdm.notebook import trange, tqdm
-from utils import LoadModel, CreateWorlModelInstance, plot_graphs
+from utils import LoadModel, CreateWorlModelInstance, plot_graphs, z_norm
 import matplotlib.pyplot as plt
 import torch
 import numpy as np 
@@ -187,6 +187,8 @@ class Inference:
         action_dims = self.config['robot_params']['action_dims']
         contact_dims = self.config['robot_params']['contact_dims']
         max_steps = M + N
+        mean = np.array([self.config.get("mean_state_action")])
+        std = np.array([self.config.get("std_state_action")])
 
         # JOINT_PICK = [0, 5, 15]
         JOINT_PICK = [i for i in range(29)]
@@ -203,13 +205,16 @@ class Inference:
         )
         print(len(combined_trajectory[0]))
         print('traj len : ', len(combined_trajectory))
-
+        # print(combined_trajectory.shape)
         start_idx = random.randint(0, len(combined_trajectory)-(M+N))
         end_idx = start_idx + (M+N)
         test_tuple_window = combined_trajectory[start_idx:end_idx]
         print(len(test_tuple_window))
-        test_window = torch.tensor(np.array([list(chain.from_iterable(single_step_tuple[:1] + single_step_tuple[2:3])) 
-                                for single_step_tuple in test_tuple_window], dtype=np.float32))
+        test_window = z_norm(np.array([list(chain.from_iterable(single_step_tuple[:1] + single_step_tuple[2:3])) 
+                                for single_step_tuple in test_tuple_window], dtype=np.float32),
+                            mean=mean,
+                            std=std)
+        test_window = torch.tensor(test_window)
         print('test window shape : ', test_window.shape)
         single_trajectory = torch.unsqueeze(test_window, dim=0)
         print(single_trajectory.shape)

@@ -34,6 +34,12 @@ def combine_trajectories(transitions_path: str):
     def save_mergerd_transitions(save_path: str, merged_rows: List, 
                              db_name: str = "combined_transitions.db"):
         save_path = os.path.join(save_path, db_name)
+
+        # delete if already exists
+        if os.path.isfile(save_path):
+            os.remove(save_path)
+            print("Removed existing combined  db")
+
         conn = sqlite3.connect(save_path)
         cursor = conn.cursor()
 

@@ -4,6 +4,7 @@ from collections import OrderedDict
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import random
+from utils import z_norm
 
 
 def _normalize_db_paths(db_path=None, db_paths=None):
@@ -40,7 +41,7 @@ class LazyCombinedTrajectoryView:
 
 class TrajectoryChunksDataset(Dataset):
     def __init__(self, db_path: str = None, db_paths=None, M: int = 32, N: int = 8, traj_cache_size: int = 32, 
-                 run_mode: str = None, combined_db_path: str = None):
+                 run_mode: str = None, combined_db_path: str = None, mean: list = None, std: list = None):
         paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
         self.db_paths = paths
         self.M = M
@@ -49,6 +50,8 @@ class TrajectoryChunksDataset(Dataset):
         self._traj_cache_limit = max(1, int(traj_cache_size))
         self.run_mode = run_mode
         self.combined_db_path = combined_db_path
+        self.mean = np.array([mean])
+        self.std= np.array([std])
 
         self._sources = []
         traj_lengths = []
@@ -184,7 +187,9 @@ class TrajectoryChunksDataset(Dataset):
                         ],
                         dtype=np.float32,
                     )
-                    all_windows.append(window)
+                    all_windows.append(z_norm(state_action_pair=window,
+                                              mean=self.mean,
+                                              std=self.std))
 
         random.shuffle(all_windows)
         return all_windows
@@ -218,11 +223,14 @@ def load_dataset(
     N: int = 8,
     traj_cache_size: int = 32,
     combined_db_path: str = None,
-    run_mode: str = None
+    run_mode: str = None,
+    mean: list = None,
+    std: list = None
 ):
     paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
     dataset = TrajectoryChunksDataset(db_paths=paths, M=M, N=N, traj_cache_size=traj_cache_size, 
-                                      combined_db_path=combined_db_path, run_mode=run_mode)
+                                      combined_db_path=combined_db_path, run_mode=run_mode,
+                                      mean=mean, std=std)
 
     if combine_trajectory:
         return dataset.get_combined_trajectory()

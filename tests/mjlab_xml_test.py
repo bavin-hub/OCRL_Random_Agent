@@ -1,3 +1,13 @@
+"""Passive viewer loop for mjlab G1 on ground (works from any cwd).
+
+Requires ``mjlab`` importable from the active environment (e.g. conda env).
+
+Uses :func:`compile_g1_with_ground` and holds pose by sending **fixed** position
+setpoints equal to the joint angles after ``init_state`` reset. (Updating
+``ctrl`` from *live* ``qpos`` every step would make ``ctrl - qpos == 0`` and
+remove PD stiffness, so the robot would collapse under gravity.)
+"""
+
 from __future__ import annotations
 
 import mujoco

@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""Batched Unitree G1 velocity env on GPU (default 4096 worlds).
+
+Run from any directory; requires mjlab + PyTorch + CUDA + MuJoCo Warp in the env::
+
+  python /path/to/run_g1_4096_gpu.py
+  python /path/to/run_g1_4096_gpu.py --num-envs 2048 --steps 50
+
+Uses the same task definition as ``Mjlab-Velocity-Flat-Unitree-G1`` (flat ground,
+full MDP), only overrides ``scene.num_envs`` and ``device``.
+"""
+
 from __future__ import annotations
 
 import argparse

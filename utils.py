@@ -117,7 +117,7 @@ def count_parameters(model):
 
 def save_plot_figure(fig, model_dir_name: str, filename: str, dpi: int = 150):
     """Write ``fig`` to ``logs/plots/{model_dir_name}/{filename}`` (adds .png if no extension)."""
-    _, plots_dir = create_runs_dir(model_dir_name)
+    _, plots_dir, _ = create_runs_dir(model_dir_name)
     if not any(filename.lower().endswith(ext) for ext in (".png", ".pdf", ".svg")):
         filename = f"{filename}.png"
     out_path = os.path.join(plots_dir, filename)
@@ -195,6 +195,12 @@ def plot_graphs(lin_vel_true, lin_vel_preds, ang_vel_true,
     fig_j.tight_layout()
     save_plot_figure(fig_j, model_dir_name, f"{model_name}_joints")
     plt.show()
+
+
+def z_norm(state_action_pair, mean, std):
+    # print(type(state_action_pair))
+    state_action_pair = (state_action_pair - mean) / (std + 1e-8)
+    return state_action_pair.astype(np.float32)
 
 
 
