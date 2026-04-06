@@ -105,7 +105,7 @@ mkdir -p data/pretraining_rollouts
 ```
 
 2. Download the zip from:
-   > https://drive.google.com/file/d/1yV5Nhvdgugw56TS_FYcb-22JIRg18YL_/view?usp=drive_link
+   > [https://drive.google.com/file/d/1yV5Nhvdgugw56TS_FYcb-22JIRg18YL_/view?usp=drive_link](https://drive.google.com/file/d/1Rq4SQsoPI4--GKzydMWmZSiU5RhmsEal/view?usp=drive_link)
 
 3. Place it inside `data/pretraining_rollouts/`, then unzip and clean up:
 
