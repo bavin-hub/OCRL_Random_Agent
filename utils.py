@@ -39,11 +39,14 @@ def CreateWorlModelInstance(config, model_type: str = "wm_gru"):
             image_width=vp["image_width"],
             cnn_embed_dim=vp["cnn_embed_dim"],
             action_embed_dim=vp["action_embed_dim"],
-            latent_dim=vp["latent_dim"],
+            num_categories=vp["num_categories"],
+            num_classes=vp["num_classes"],
             hidden_dim=vp["hidden_dim"],
             lr=vt["learning_rate"],
             weight_decay=vt["weight_decay"],
             device=config["device"],
+            prop_dim=vp.get("prop_dim", 0),
+            prop_embed_dim=vp.get("prop_embed_dim", 64),
         )
         return world_model
 
@@ -142,7 +145,7 @@ def save_plot_figure(fig, model_dir_name: str, filename: str, dpi: int = 150):
     """Write ``fig`` to ``logs/plots/{model_dir_name}/{filename}`` (adds .png if no extension)."""
     if plt is None:
         raise ImportError("matplotlib is required for plotting. Install matplotlib to save figures.")
-    _, plots_dir = create_runs_dir(model_dir_name)
+    _, plots_dir, _ = create_runs_dir(model_dir_name)
     if not any(filename.lower().endswith(ext) for ext in (".png", ".pdf", ".svg")):
         filename = f"{filename}.png"
     out_path = os.path.join(plots_dir, filename)

@@ -1,2 +1,13 @@
-/VAE
-/world_model
+*.npy
+*.pth
+*.db
+*.png
+*_pycache*/
+lafan1_retargeted/
+pretraining_rollouts/
+logs/
+__pycache__/
+.DS_Store
+*.egg-info/
+CODEBASE_EXPLAINER.md
+data/baseline_policies/unitree_rl_mjlab/

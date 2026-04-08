@@ -245,6 +245,14 @@ def _extract_trajectory_from_blob(blob: dict):
     return blob[traj_keys[0]]
 
 
+def _extract_done(transition) -> bool:
+    """Check if this transition has a done flag (last element, int 1)."""
+    if not isinstance(transition, (list, tuple)) or len(transition) == 0:
+        return False
+    last = transition[-1]
+    return isinstance(last, int) and bool(last)
+
+
 def _extract_rgbd_record(transition):
     if not isinstance(transition, (list, tuple)):
         return None
@@ -284,19 +292,23 @@ def _as_chw_depth(depth: np.ndarray) -> np.ndarray:
 
 
 class VisionTransitionDataset(Dataset):
-    """Loads one-step visual transitions from rollout DBs.
+    """Loads seq_len consecutive RGB-D frames from rollout .db files.
 
-    Expected transition layout per step:
-      (state, contact, target_action, policy_action, rgbd_record)
-    where rgbd_record is a dict containing *_path entries.
+    Each item returns (rgb_t, depth_t, rgb_t1, depth_t1, action_t, prop_t)
+    as arrays of shape (seq_len, ...).
+
+    Proprioception = state[:38] = lin_vel(3) + ang_vel(3) + gravity(3) + joint_pos(29).
     """
 
-    def __init__(self, db_path: str = None, db_paths=None, traj_cache_size: int = 16):
+    _PROP_SLICE = slice(0, 38)
+
+    def __init__(self, db_path: str = None, db_paths=None, traj_cache_size: int = 16, seq_len: int = 8):
         self.db_paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
+        self.seq_len = seq_len
         self._traj_cache = OrderedDict()
         self._traj_cache_limit = max(1, int(traj_cache_size))
         self._sources = []  # (db_file, rowid)
-        self._index = []    # (source_idx, step_idx_t, step_idx_t1, mode)
+        self._index = []    # (source_idx, start_step_t)
 
         for db_file in self.db_paths:
             if "combined" in os.path.basename(db_file):
@@ -307,46 +319,26 @@ class VisionTransitionDataset(Dataset):
                 rows = cur.execute("SELECT rowid, * FROM PretrainingData ORDER BY rowid").fetchall()
                 for row in rows:
                     rowid = row[0]
-                    payload = row[1]
-                    blob = json.loads(payload)
-                    traj = _extract_trajectory_from_blob(blob)
+                    traj = _extract_trajectory_from_blob(json.loads(row[1]))
                     source_idx = len(self._sources)
                     self._sources.append((db_file, rowid))
 
-                    # Backward-compatible support for old schema that stores direct t->t+1 paths.
-                    direct_added = 0
+                    # Collect steps that have a valid rgb_path record.
+                    valid_steps = set()
                     for i, transition in enumerate(traj):
                         meta = _extract_rgbd_record(transition)
-                        if meta is None:
-                            continue
-                        if all(k in meta for k in ("rgb_t_path", "depth_t_path", "rgb_t1_path", "depth_t1_path")):
-                            self._index.append((source_idx, i, i, "direct"))
-                            direct_added += 1
+                        if meta is not None and "rgb_path" in meta:
+                            valid_steps.add(i)
 
-                    if direct_added > 0:
-                        continue
-
-                    # New schema: store only current obs, pair step t with t+1 within trajectory.
-                    current_steps = []
-                    for i, transition in enumerate(traj):
-                        meta = _extract_rgbd_record(transition)
-                        if meta is None:
-                            continue
-                        if all(k in meta for k in ("rgb_path", "depth_path")):
-                            current_steps.append(i)
-                    current_set = set(current_steps)
-                    for i in current_steps:
-                        j = i + 1
-                        if j in current_set:
-                            self._index.append((source_idx, i, j, "pair"))
+                    # Index sequences: need seq_len+1 consecutive valid steps.
+                    for i in sorted(valid_steps):
+                        if all(i + k in valid_steps for k in range(seq_len + 1)):
+                            self._index.append((source_idx, i))
             finally:
                 conn.close()
 
         if not self._index:
-            raise ValueError(
-                "No compatible visual transitions found. "
-                "For schema v3, collect with VISION_CAPTURE_EVERY_N=1 so step t can pair with t+1."
-            )
+            raise ValueError("No valid visual sequences found in database(s).")
 
     def __len__(self):
         return len(self._index)
@@ -364,9 +356,7 @@ class VisionTransitionDataset(Dataset):
             row = cur.fetchone()
             if row is None:
                 raise ValueError(f"Missing rowid={rowid} in {db_file}")
-            payload = row[0]
-            blob = json.loads(payload)
-            return _extract_trajectory_from_blob(blob)
+            return _extract_trajectory_from_blob(json.loads(row[0]))
         finally:
             conn.close()
 
@@ -380,36 +370,31 @@ class VisionTransitionDataset(Dataset):
         return traj
 
     def __getitem__(self, index):
-        source_idx, step_idx_t, step_idx_t1, mode = self._index[int(index)]
+        source_idx, start_t = self._index[int(index)]
         traj = self._get_trajectory_cached(source_idx)
-        transition_t = traj[step_idx_t]
-        meta_t = _extract_rgbd_record(transition_t)
-        if meta_t is None:
-            raise ValueError(f"Missing RGB-D record for transition index {index}")
-        if mode == "direct":
-            rgb_t = _as_chw_rgb(np.load(meta_t["rgb_t_path"]))
-            depth_t = _as_chw_depth(np.load(meta_t["depth_t_path"]))
-            rgb_t1 = _as_chw_rgb(np.load(meta_t["rgb_t1_path"]))
-            depth_t1 = _as_chw_depth(np.load(meta_t["depth_t1_path"]))
-        elif mode == "pair":
-            transition_t1 = traj[step_idx_t1]
-            meta_t1 = _extract_rgbd_record(transition_t1)
-            if meta_t1 is None:
-                raise ValueError(f"Missing next-step RGB-D record for transition index {index}")
-            rgb_t = _as_chw_rgb(np.load(meta_t["rgb_path"]))
-            depth_t = _as_chw_depth(np.load(meta_t["depth_path"]))
-            rgb_t1 = _as_chw_rgb(np.load(meta_t1["rgb_path"]))
-            depth_t1 = _as_chw_depth(np.load(meta_t1["depth_path"]))
-        else:
-            raise ValueError(f"Unknown vision index mode: {mode}")
-        action_t = np.asarray(transition_t[3], dtype=np.float32)
+
+        # Load seq_len+1 frames: start_t to start_t+seq_len (inclusive).
+        # Frame k is input at step k; frame k+1 is the prediction target at step k.
+        frames_rgb   = []
+        frames_depth = []
+        for k in range(self.seq_len + 1):
+            meta = _extract_rgbd_record(traj[start_t + k])
+            frames_rgb.append(_as_chw_rgb(np.load(meta["rgb_path"])))
+            frames_depth.append(_as_chw_depth(np.load(meta["depth_path"])))
 
         return {
-            "rgb_t": rgb_t,
-            "depth_t": depth_t,
-            "action_t": action_t,
-            "rgb_t1": rgb_t1,
-            "depth_t1": depth_t1,
+            "rgb_t":    np.stack(frames_rgb[:-1]),    # (seq_len, 3, H, W)
+            "depth_t":  np.stack(frames_depth[:-1]),  # (seq_len, 1, H, W)
+            "rgb_t1":   np.stack(frames_rgb[1:]),     # (seq_len, 3, H, W)
+            "depth_t1": np.stack(frames_depth[1:]),   # (seq_len, 1, H, W)
+            "action_t": np.stack([
+                np.asarray(traj[start_t + k][3], dtype=np.float32)
+                for k in range(self.seq_len)
+            ]),  # (seq_len, action_dim)
+            "prop_t": np.stack([
+                np.asarray(traj[start_t + k][0], dtype=np.float32)[self._PROP_SLICE]
+                for k in range(self.seq_len)
+            ]),  # (seq_len, 38)
         }
 
 
@@ -420,7 +405,8 @@ def load_vision_dataset(
     shuffle: bool = True,
     drop_last: bool = True,
     traj_cache_size: int = 16,
+    seq_len: int = 8,
 ):
     paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
-    dataset = VisionTransitionDataset(db_paths=paths, traj_cache_size=traj_cache_size)
+    dataset = VisionTransitionDataset(db_paths=paths, traj_cache_size=traj_cache_size, seq_len=seq_len)
     return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)

@@ -205,12 +205,10 @@ class BaseViewer(ABC):
     self._rgbd_renderer = None
     self._rgbd_enabled = False
     self._rgbd_root_dir: Optional[str] = None
-    self._rgbd_camera_raw = os.environ.get("VISION_CAMERA", "").strip()
-    self._rgbd_camera: Optional[int | str] = None
-    self._printed_model_cameras = False
-    self._rgbd_width = int(os.environ.get("VISION_WIDTH", "256"))
-    self._rgbd_height = int(os.environ.get("VISION_HEIGHT", "256"))
-    self._rgbd_capture_every_n = max(1, int(os.environ.get("VISION_CAPTURE_EVERY_N", "1")))
+    self._rgbd_camera: Optional[str] = None
+    self._rgbd_width = int(os.environ.get("VISION_WIDTH", "64"))
+    self._rgbd_height = int(os.environ.get("VISION_HEIGHT", "64"))
+    self._rgbd_capture_every_n = int(os.environ.get("VISION_CAPTURE_EVERY_N", "1"))
     # change ends #
 
     # Action queue, drained on main thread each tick.
@@ -419,72 +417,19 @@ class BaseViewer(ABC):
       print("[WARN] mujoco Python package unavailable; RGB-D capture disabled.")
       return
     mjm = base_env.sim.mj_model
-    available_cameras = []
-    for i in range(mjm.ncam):
-      cam_name = mujoco.mj_id2name(mjm, mujoco.mjtObj.mjOBJ_CAMERA, i)
-      available_cameras.append((i, cam_name))
-    if not self._printed_model_cameras:
-      self._printed_model_cameras = True
-      print(f"[INFO] Available model cameras: {available_cameras}")
-    if mjm.ncam <= 0:
-      raise RuntimeError(
-        "Exocentric RGB-D capture requires at least one model camera. Found ncam=0."
-      )
-
-    selected_camera: int | str
-    if self._rgbd_camera_raw == "":
-      selected_camera = 0
-      print("[INFO] VISION_CAMERA not set. Defaulting to model camera index 0 (exocentric).")
-    else:
-      try:
-        cam_idx = int(self._rgbd_camera_raw)
-        if cam_idx == -1:
-          raise ValueError(
-            "VISION_CAMERA=-1 refers to the free/default viewer camera and is not exocentric."
-          )
-        if cam_idx < 0 or cam_idx >= mjm.ncam:
-          raise ValueError(
-            f"VISION_CAMERA index {cam_idx} is out of range [0, {mjm.ncam - 1}]"
-          )
-        selected_camera = cam_idx
-      except ValueError as exc:
-        if self._rgbd_camera_raw.isdigit() or self._rgbd_camera_raw.startswith("-"):
-          raise
-        valid_names = [name for _, name in available_cameras if name]
-        if self._rgbd_camera_raw not in valid_names:
-          raise ValueError(
-            f'VISION_CAMERA="{self._rgbd_camera_raw}" is not a valid model camera name. '
-            f"Valid names: {valid_names}"
-          ) from exc
-        selected_camera = self._rgbd_camera_raw
-    self._rgbd_camera = selected_camera
-    try:
-      self._rgbd_renderer = mujoco.Renderer(
-        mjm, width=self._rgbd_width, height=self._rgbd_height
-      )
-      self._rgbd_enabled = True
-      print(
-        f"[INFO] RGB-D capture enabled ({self._rgbd_width}x{self._rgbd_height}, camera={self._rgbd_camera!r})"
-      )
-    except Exception as exc:
-      self._rgbd_renderer = None
-      self._rgbd_enabled = False
-      raise RuntimeError(f"Failed to initialize RGB-D renderer: {exc}") from exc
+    self._rgbd_camera = os.environ.get("VISION_CAMERA", "").strip()
+    self._rgbd_renderer = mujoco.Renderer(mjm, width=self._rgbd_width, height=self._rgbd_height)
+    self._rgbd_enabled = True
 
   def _capture_rgbd_frame(self, base_env):
-    if not self._rgbd_enabled or self._rgbd_renderer is None:
+    if not self._rgbd_enabled:
       return None, None
-    try:
-      self._rgbd_renderer.update_scene(base_env.sim.mj_data, camera=self._rgbd_camera)
-      self._rgbd_renderer.disable_depth_rendering()
-      rgb = self._rgbd_renderer.render().copy()
-      self._rgbd_renderer.enable_depth_rendering()
-      depth = self._rgbd_renderer.render().copy().astype(np.float32)
-      self._rgbd_renderer.disable_depth_rendering()
-      return rgb, depth
-    except Exception as exc:
-      print(f"[WARN] RGB-D capture failed for current step: {exc}")
-      return None, None
+    self._rgbd_renderer.update_scene(base_env.sim.mj_data, camera=self._rgbd_camera)
+    self._rgbd_renderer.disable_depth_rendering()
+    rgb = self._rgbd_renderer.render().copy()
+    self._rgbd_renderer.enable_depth_rendering()
+    depth = self._rgbd_renderer.render().copy().astype(np.float32)
+    return rgb, depth
 
   def _save_rgbd_transition(self, rgb_t, depth_t, step_idx: int):
     if self._rgbd_root_dir is None:
@@ -500,14 +445,13 @@ class BaseViewer(ABC):
     np.save(depth_path, depth_t)
 
     return {
-      "schema_version": 3,
       "camera": self._rgbd_camera,
       "step_idx_in_traj": int(step_idx),
       "rgb_path": os.path.abspath(rgb_path),
       "depth_path": os.path.abspath(depth_path),
     }
 
-  def extract_observation_vectors(self, env, st, policy_at, ct, env_id=0, rgbd_record: Optional[dict] = None):
+  def extract_observation_vectors(self, env, st, policy_at, ct, env_id=0, rgbd_record: Optional[dict] = None, done: bool = False):
     """Extract [base_lin_vel, base_ang_vel, gravity_proj, joint_pos, joint_vel, joint_torque],
        [body_contact, foot_heights, foot_velocities], and target actions from current state.
 
@@ -588,6 +532,8 @@ class BaseViewer(ABC):
     )
     if rgbd_record is not None:
       transition = transition + (rgbd_record,)
+    # done is always the last element: 1 = episode ended after this step.
+    transition = transition + (int(done),)
 
     self.local_buffer.append(transition)
 
@@ -691,7 +637,14 @@ class BaseViewer(ABC):
           rgb_t, depth_t = self._capture_rgbd_frame(base_env)
         # change ends
 
-        self.env.step(actions)
+        step_result = self.env.step(actions)
+        # Detect episode termination (robot fell / termination condition).
+        env_reset = False
+        if isinstance(step_result, tuple) and len(step_result) >= 3:
+          try:
+            env_reset = bool(step_result[2].any())
+          except Exception:
+            env_reset = bool(step_result[2])
 
         # change starts #
         self.incremental_step += 1
@@ -701,7 +654,8 @@ class BaseViewer(ABC):
             rgb_t, depth_t, step_idx=len(self.local_buffer)
           )
         self.extract_observation_vectors(
-          base_env, st=st, policy_at=actions, ct=ct, rgbd_record=rgbd_record
+          base_env, st=st, policy_at=actions, ct=ct, rgbd_record=rgbd_record,
+          done=env_reset,
         )
         if self.incremental_step % self.transitions_per_trajectory == 0 and self.incremental_step != 0:
             self.trajectory_ctr += 1
@@ -823,9 +777,11 @@ class BaseViewer(ABC):
     # change starts #
     self._rollout_output_dir = None
     if db_dir is not None:
+      from datetime import datetime
       n_transitions = self.buffer_size_d * self.transitions_per_trajectory
       folder_name = f"{n_transitions}_transitions"
-      self._rollout_output_dir = os.path.join(db_dir, folder_name)
+      timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+      self._rollout_output_dir = os.path.join(db_dir, folder_name, timestamp)
       os.makedirs(self._rollout_output_dir, exist_ok=True)
       self._rgbd_root_dir = os.path.join(self._rollout_output_dir, "rgbd_frames")
       os.makedirs(self._rgbd_root_dir, exist_ok=True)
@@ -855,7 +811,7 @@ class BaseViewer(ABC):
     finally:
       if self._rgbd_renderer is not None:
         try:
-          self._rgbd_renderer.close()
+          self._rgbd_renderer.close() #release the memory of the renderer
         except Exception:
           pass
         self._rgbd_renderer = None

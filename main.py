@@ -1,5 +1,5 @@
 from runners.agent import Agent
-import json, argparse, time, os, sqlite3
+import json, argparse, time, os, sqlite3, random
 from typing import List
 
 
@@ -13,8 +13,39 @@ parser.add_argument("--load_ckpts_dir", default="", help="pass in the ckpts dir 
 parser.add_argument("--ckpt_name", default="", help="pass in the ckpt name")
 parser.add_argument(
     '--db_dir_name',
-    default='pretraining_rollouts',
-    help='Subfolder under data/ containing rollout .db files (e.g. 1000000_transitions)',
+    default='',
+    help='Subfolder under data/ containing rollout .db files (legacy single-dir mode)',
+)
+parser.add_argument(
+    '--train_dirs',
+    nargs='+',
+    default=[],
+    help=(
+        'One or more directories containing training .db files. '
+        'Each entry is a run timestamp dir, e.g. '
+        'data/pretraining_rollouts/25000_transitions/2026-04-08_14-32-20'
+    ),
+)
+parser.add_argument(
+    '--test_dirs',
+    nargs='+',
+    default=[],
+    help='One or more directories containing test/eval .db files.',
+)
+parser.add_argument(
+    '--split',
+    type=float,
+    default=1.0,
+    help=(
+        'Train fraction for an automatic 80/20-style split of all files found '
+        'in --train_dirs (e.g. 0.8). Ignored when --test_dirs is provided.'
+    ),
+)
+parser.add_argument(
+    '--split_seed',
+    type=int,
+    default=42,
+    help='Random seed used for the train/test shuffle-split.',
 )
 
 
@@ -24,45 +55,34 @@ def combine_trajectories(transitions_path: str):
     def get_all_rows_per_db(db_path: str):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-
-        query = '''SELECT * From PretrainingData'''
-        cursor.execute(query)
-
+        cursor.execute('''SELECT * FROM PretrainingData''')
         rows = cursor.fetchall()
+        conn.close()
         return rows
-    
-    def save_mergerd_transitions(save_path: str, merged_rows: List, 
-                             db_name: str = "combined_transitions.db"):
+
+    def save_merged_transitions(save_path: str, merged_rows: List,
+                                db_name: str = "combined_transitions.db"):
         save_path = os.path.join(save_path, db_name)
         conn = sqlite3.connect(save_path)
         cursor = conn.cursor()
-
-        create_table_query = f"""
-            CREATE TABLE IF NOT EXISTS PretrainingData (
-            trajectories TEXT
-            )
-            """
-        cursor.execute(create_table_query)
-
-
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS PretrainingData (trajectories TEXT)
+        """)
         cursor.executemany("INSERT INTO PretrainingData (trajectories) VALUES (?)", merged_rows)
         conn.commit()
+        conn.close()
         print("Saved all trajectories into one db")
 
-
     all_transitions_path = os.path.join(os.getcwd(), f"data/{transitions_path}")
-    all_transition_dbs = os.listdir(all_transitions_path)
     combined_transitions = []
-    for file in all_transition_dbs:
-        db_path = os.path.join(all_transitions_path, file)
-        # print(db_path)
-        all_rows_single_db = get_all_rows_per_db(db_path)
-        
-        combined_transitions += all_rows_single_db
+    for fname in os.listdir(all_transitions_path):
+        # Only process .db files; skip combined output and any directories.
+        if not fname.endswith(".db") or fname == "combined_transitions.db":
+            continue
+        db_path = os.path.join(all_transitions_path, fname)
+        combined_transitions += get_all_rows_per_db(db_path)
 
-
-    save_mergerd_transitions(all_transitions_path,
-                         combined_transitions)
+    save_merged_transitions(all_transitions_path, combined_transitions)
 
 
 
@@ -99,36 +119,87 @@ def run(args):
     config['model_dir_name'] = args.model_dir_name
     config["model_name"] = args.model_name
 
-    # Accept: "pretraining_rollouts", "data/pretraining_rollouts", or absolute path.
-    if os.path.isabs(args.db_dir_name):
-        db_base = args.db_dir_name
-    elif args.db_dir_name.startswith('data' + os.sep) or args.db_dir_name == 'data':
-        db_base = os.path.join(os.getcwd(), args.db_dir_name)
+    def _resolve_dir(d: str) -> str:
+        """Resolve a directory path relative to cwd or data/."""
+        if os.path.isabs(d):
+            return d
+        if os.path.isdir(d):
+            return os.path.abspath(d)
+        candidate = os.path.join(os.getcwd(), d)
+        if os.path.isdir(candidate):
+            return candidate
+        candidate2 = os.path.join(os.getcwd(), 'data', d)
+        if os.path.isdir(candidate2):
+            return candidate2
+        raise FileNotFoundError(f"Directory not found: {d}")
+
+    def _dbs_from_dirs(dirs):
+        paths = []
+        for d in dirs:
+            resolved = _resolve_dir(d)
+            found = sorted(
+                os.path.join(resolved, f)
+                for f in os.listdir(resolved)
+                if f.endswith('.db') and f != 'combined_transitions.db'
+            )
+            if not found:
+                raise FileNotFoundError(f"No .db files in {resolved}")
+            paths.extend(found)
+        return paths
+
+    # --train_dirs / --test_dirs take priority over legacy --db_dir_name.
+    if args.train_dirs:
+        all_dbs = _dbs_from_dirs(args.train_dirs)
+
+        if args.test_dirs:
+            # Explicit test dirs — use as-is.
+            train_db_paths = all_dbs
+            test_db_paths  = _dbs_from_dirs(args.test_dirs)
+        elif 0.0 < args.split < 1.0:
+            # Auto split all collected .db files by the given fraction.
+            rng = random.Random(args.split_seed)
+            shuffled = list(all_dbs)
+            rng.shuffle(shuffled)
+            n_train = max(1, round(len(shuffled) * args.split))
+            train_db_paths = shuffled[:n_train]
+            test_db_paths  = shuffled[n_train:]
+            print(f"Auto split (seed={args.split_seed}): "
+                  f"{len(train_db_paths)} train / {len(test_db_paths)} test")
+        else:
+            train_db_paths = all_dbs
+            test_db_paths  = []
+
+        db_paths = train_db_paths  # backward compat alias
+        db_base  = os.path.dirname(train_db_paths[0])
     else:
-        db_base = os.path.join(os.getcwd(), 'data', args.db_dir_name)
-    if not os.path.isdir(db_base):
-        raise FileNotFoundError(f"Database directory not found: {db_base}")
-    db_paths = sorted(
-        os.path.join(db_base, f) for f in os.listdir(db_base) if f.endswith('.db')
-    )
-    
-    print()
+        if not args.db_dir_name:
+            raise ValueError("Pass --train_dirs or --db_dir_name")
+        db_base = _resolve_dir(args.db_dir_name)
+        db_paths = sorted(
+            os.path.join(db_base, f) for f in os.listdir(db_base)
+            if f.endswith('.db') and f != 'combined_transitions.db'
+        )
+        if not db_paths:
+            raise FileNotFoundError(f"No .db files in {db_base}")
+        train_db_paths = db_paths
+        test_db_paths  = []
 
-    if not db_paths:
-        raise FileNotFoundError(f"No .db files in {db_base}")
-    
-    # create combined trajectories
-    combine_trajectories(args.db_dir_name)
-    print("Created combined transitions db")
+    print(f"Train .db files : {len(train_db_paths)}")
+    print(f"Test  .db files : {len(test_db_paths)}")
 
-    config['db_base_dir'] = os.path.abspath(db_base)
-    config['db_paths'] = [os.path.abspath(p) for p in db_paths]
-    config['db_path'] = config['db_paths'][0]
-    config['combined_db_path'] = os.path.join(os.getcwd(), f"data/{args.db_dir_name}/combined_transitions.db")
+    config['db_base_dir']     = os.path.abspath(db_base)
+    config['db_paths']        = [os.path.abspath(p) for p in train_db_paths]
+    config['db_path']         = config['db_paths'][0]
+    config['test_db_paths']   = [os.path.abspath(p) for p in test_db_paths]
+    config['combined_db_path'] = os.path.join(db_base, 'combined_transitions.db')
     config["run_mode"] = args.run_mode
+
+    # Combined DB only needed for state-based world model.
+    if args.model_type != "wm_vision_rssm":
+        combine_trajectories(args.db_dir_name)
+        print("Created combined transitions db")
+
     agent = Agent(config)
-
-
     agent(args.run_mode, args.model_type)
 
 

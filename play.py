@@ -23,6 +23,7 @@ from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 class PlayConfig:
   agent: Literal["zero", "random", "trained"] = "trained"
   checkpoint_file: str | None = None
+  wandb_run_path: str | None = None
   motion_file: str | None = None
   num_envs: int | None = None
   device: str | None = None
@@ -168,14 +169,14 @@ def run_play(task_id: str, cfg: PlayConfig):
     resolved_viewer = cfg.viewer
 
   if resolved_viewer == "native":
-    split_dir = os.getcwd().split("/")
-    traj_db_dir = os.path.join('/'.join(split_dir[:-2]), 'pretraining_rollouts')
-    if os.path.isdir(traj_db_dir):
-      print('Rollouts db exists')
-    else:
-      os.mkdir(traj_db_dir)
-      print("New directory created to save rollouts")
-    
+    def _find_project_root() -> Path:
+      for candidate in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents]:
+        if (candidate / "main.py").exists() and (candidate / "data").exists():
+          return candidate
+      return Path.cwd()
+    traj_db_dir = str(_find_project_root() / "data" / "pretraining_rollouts")
+    os.makedirs(traj_db_dir, exist_ok=True)
+    print(f"Rollout output dir: {traj_db_dir}")
     NativeMujocoViewer(env, policy).run(db_dir=traj_db_dir)
   elif resolved_viewer == "viser":
     ViserPlayViewer(env, policy).run()
@@ -190,6 +191,7 @@ def main():
   # Import tasks to populate the registry.
   import mjlab.tasks  # noqa: F401
   import src.tasks
+
 
   all_tasks = list_tasks()
   chosen_task, remaining_args = tyro.cli(

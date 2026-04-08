@@ -1,155 +1,156 @@
-# 🤖 Robotic World Model
+# Robotic World Model
 
-> A learned internal model that enables robots to understand, predict, and interact with their environment through experience.
-
----
-
-## 📖 Table of Contents
-
-- [Robotic World Model](#-robotic-world-model)
-- [Setup](#-setup)
-- [World Model](#-world-model)
-- [TODOs](#-todos)
+A learned world model for the Unitree G1 humanoid robot. Given an RGB-D frame and an action, the model predicts the next frame — enabling the robot to "imagine" future states before acting.
 
 ---
 
-## 🧠 Robotic World Model
+## Setup
 
-A **Robotic World Model** is a learned internal representation that allows a robot to simulate and reason about the physical world — without requiring live sensor input at every decision step. Rather than reacting purely to raw observations, the robot learns a compressed, structured understanding of how the world behaves over time.
+See [setup.md](setup.md) for environment setup.
 
-At its core, the world model ingests sequences of observations (e.g., joint states, IMU readings, camera frames) and actions, then learns to predict future states. This enables the robot to "imagine" the consequence of taking an action before executing it — dramatically improving sample efficiency and planning capability.
+---
 
-### How It Works
+## Architecture
+
+Two world model variants:
+
+- **`wm_gru`** — state-based. Predicts next proprioceptive state from current state + action.
+- **`wm_vision_rssm`** — vision-based. Predicts next RGB-D frame from current frame + action + proprioception.
+
+### Vision World Model (`wm_vision_rssm`)
+
+RSSM with a 6-stage ResNet encoder/decoder for 256x256 RGB-D, GRU dynamics, and discrete categorical latents (DreamerV3-style).
 
 ```
-Observation (oₜ) ──┐
-                   ├──▶  Encoder  ──▶  Latent State (zₜ)  ──▶  GRU  ──▶  zₜ₊₁  ──▶  Decoder  ──▶  Predicted Obs (ô)
-Action     (aₜ) ──┘
+RGB-D(t) + Action(t) + Prop(t) → Encoder → Prior/Posterior → GRU → Decoder → RGB-D(t+1)
 ```
 
-1. **Encoder** — Maps high-dimensional observations into a compact latent space `zₜ`.
-2. **Recurrent Core (GRU)** — Maintains a hidden state that captures temporal dynamics across timesteps.
-3. **Transition Model** — Predicts the next latent state `zₜ₊₁` given the current state and action `aₜ`.
-4. **Decoder** — Reconstructs the predicted observation `ô` from the latent state for supervision and interpretability.
-
-### Why It Matters
-
-| Capability | Benefit |
-|---|---|
-| **State prediction** | Robot can anticipate future conditions before they occur |
-| **Model-based planning** | Enables rollout simulation for safer, more efficient policy search |
-| **Data efficiency** | Learns rich representations from offline transition data |
-| **Generalization** | Latent structure captures physics that transfers across terrains and tasks |
-| **Reduced real-world risk** | Test behaviors in imagination before deploying on hardware |
-
-### Architecture: `wm_gru`
-
-This implementation uses a **GRU-based world model** (`wm_gru`) trained on prerecorded locomotion rollouts. The GRU hidden state serves as the robot's "memory," encoding recent history to produce accurate multi-step predictions even under partial observability — a critical property for real legged robots operating in noisy, unstructured environments.
+Key components:
+- **Encoder**: 6-stage ResNet (256→4 spatial, with GroupNorm + residual blocks)
+- **Latent**: 32x32 discrete categorical with straight-through gradients
+- **Decoder**: U-Net with skip connections from 5 encoder stages
+- **Loss**: Symlog MSE (rgb + depth) + LPIPS perceptual + KL with free-bits and balancing
 
 ---
 
-## ⚙️ Setup
+## Collect Rollouts
 
-For the full step-by-step setup guide, see **[setup.md](setup.md)**.
+Rollouts are collected by running a trained policy in MuJoCo with a simulated D435 camera. Each trajectory saves `.db` files (proprioception + actions) and `.npy` files (RGB-D frames).
 
----
-
-## 🌐 World Model
-
-### Train
-
-Train the GRU-based world model on prerecorded transition data:
+### Velocity policy
 
 ```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/<transitions_dir_name> \
+cd data/baseline_policies/unitree_rl_mjlab
+
+VISION_CAMERA=robot/d435 VISION_WIDTH=256 VISION_HEIGHT=256 \
+VISION_CAPTURE_EVERY_N=1 ROLLOUT_NUM_TRAJECTORIES=100 ROLLOUT_TRANSITIONS_PER_TRAJ=200 \
+python scripts/play.py Unitree-G1-Flat-With-Terrain \
+  --checkpoint_file=logs/rsl_rl/g1_velocity/2026-03-28_18-01-31/model_900.pt
+```
+
+### Tracking policy
+
+```bash
+cd data/baseline_policies/unitree_rl_mjlab
+
+VISION_CAMERA=robot/d435 VISION_WIDTH=256 VISION_HEIGHT=256 \
+VISION_CAPTURE_EVERY_N=1 ROLLOUT_NUM_TRAJECTORIES=50 ROLLOUT_TRANSITIONS_PER_TRAJ=500 \
+python scripts/play.py Unitree-G1-Tracking-No-State-Estimation-With-Terrain \
+  --motion_file=src/assets/motions/g1/sprint1_subject2.npz \
+  --checkpoint_file=logs/rsl_rl/g1_tracking/2026-04-08_00-53-59/model_9500.pt
+```
+
+Rollouts are saved under `data/pretraining_rollouts/`.
+
+---
+
+## Train
+
+### Vision world model
+
+```bash
+python main.py \
+  --model_type wm_vision_rssm \
   --run_mode train \
-  --model_type <world_model_type>
+  --train_dirs \
+    data/pretraining_rollouts/25000_transitions/2026-04-08_13-45-36 \
+    data/pretraining_rollouts/25000_transitions/2026-04-08_15-38-39 \
+  --split 0.8
 ```
 
-**Example:**
+`--split 0.8` automatically shuffles all `.db` files and splits 80% train / 20% test. The split is deterministic (seed=42).
+
+You can also provide explicit train/test dirs:
 
 ```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/1000000_transitions \
+python main.py \
+  --model_type wm_vision_rssm \
   --run_mode train \
-  --model_type wm_gru
+  --train_dirs data/pretraining_rollouts/run1 data/pretraining_rollouts/run2 \
+  --test_dirs  data/pretraining_rollouts/run3
 ```
 
-Train the vision world model (`RGB-D_t + action_t -> RGB-D_{t+1}`):
+### State-based world model
 
 ```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/1000000_transitions \
+python main.py \
+  --model_type wm_gru \
   --run_mode train \
-  --model_type wm_vision_rssm
+  --db_dir_name pretraining_rollouts/1000000_transitions
 ```
 
-Before collecting visual rollouts, copy the patched viewer base file into your `mjlab` install (see `setup.md` step 5.2).  
-Optional camera/render settings can be controlled through env vars:
+---
+
+## Evaluate
 
 ```bash
-export VISION_CAMERA=tracking
-export VISION_WIDTH=256
-export VISION_HEIGHT=256
-export VISION_CAPTURE_EVERY_N=1
-export ROLLOUT_NUM_TRAJECTORIES=100
-export ROLLOUT_TRANSITIONS_PER_TRAJ=500
-```
-
-`VISION_CAPTURE_EVERY_N` should be `1` for one-step prediction (`t -> t+1`).
-
-### Inference
-
-Run inference using a pretrained world model checkpoint:
-
-```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/<transitions_dir_name> \
+python main.py \
+  --model_type wm_vision_rssm \
   --run_mode eval \
-  --model_type <world_model_type> \
+  --train_dirs data/pretraining_rollouts/25000_transitions/2026-04-08_13-45-36 \
   --model_dir_name <model_dir> \
   --model_name <model_name.pth>
 ```
 
-**Example:**
+---
 
-```bash
-python3 main.py \
-  --db_dir_name pretraining_rollouts/1000000_transitions \
-  --run_mode eval \
-  --model_type wm_gru \
-  --model_dir_name wm_gru_2026-03-25_23:26:29 \
-  --model_name wm_gru-epoch_30.pth
+## Config
+
+Training hyperparameters live in `config.json`. Key vision model settings:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `batch_size` | 16 | Micro-batch size per GPU forward pass |
+| `grad_accum_steps` | 4 | Accumulate gradients over N batches (effective batch = 64) |
+| `seq_len` | 40 | GRU unroll length (history depth for training) |
+| `epochs` | 300 | Training epochs |
+| `lpips_weight` | 0.5 | Perceptual loss weight (VGG-based) |
+| `depth_scale` | 50.0 | Depth normalization divisor |
+
+---
+
+## Project Structure
+
+```
+├── config.json                  # all hyperparameters
+├── main.py                      # entry point (train / eval)
+├── models/
+│   ├── world_model.py           # state-based GRU world model
+│   └── vision_world_model.py    # vision RSSM world model
+├── runners/
+│   ├── train.py                 # training loops
+│   ├── eval.py                  # evaluation
+│   └── agent.py                 # dispatcher
+├── data/
+│   ├── preprocessor.py          # dataset loaders
+│   ├── pretraining_rollouts/    # collected rollout data
+│   └── baseline_policies/       # RL policies for data collection
+├── utils.py                     # save/load/plotting helpers
+└── logs/                        # saved models, checkpoints, plots
 ```
 
-| Argument | Description |
-|---|---|
-| `--db_dir_name` | Path to the rollout dataset directory |
-| `--run_mode` | `train` to train, `eval` to evaluate |
-| `--model_type` | Model architecture (`wm_gru` or `wm_vision_rssm`) |
-| `--model_dir_name` | Directory of the saved model checkpoint |
-| `--model_name` | Checkpoint filename (`.pth`) |
-
-> Training checkpoints are saved automatically and timestamped for versioning.
-
 ---
 
-## 📋 TODOs
+## License
 
-Planned features and research directions for future development:
-
-- [ ] **Fine-tunable** — Support task-specific fine-tuning of the pretrained world model on downstream locomotion tasks
-- [ ] **Obstacle avoidance & environment adaptation** — Enable the model to predict and respond to dynamic obstacles and changing terrain conditions
-- [ ] **Human-like gait** — Learn and reproduce naturalistic, energy-efficient bipedal movement patterns inspired by human locomotion
-- [ ] **Diverse gait patterns** — Generalize across multiple locomotion modes (walk, trot, bound, crawl) within a single unified model
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
-
----
-
-<p align="center">Built with curiosity and a lot of robot falls 🦾</p>
+[MIT](LICENSE)

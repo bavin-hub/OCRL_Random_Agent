@@ -1,10 +1,32 @@
 import json, time
 from tqdm.notebook import trange, tqdm
 import torch
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from utils import SaveModel, CreateWorlModelInstance, get_model_name,\
                   count_parameters, SaveCkpt, LoadCkpt
 import time
 from data.preprocessor import load_vision_dataset
+
+
+def _augment_batch(rgb_t, depth_t, rgb_t1, depth_t1):
+    """Random horizontal flip + brightness/contrast jitter on (B, T, C, H, W) batches.
+    Same augmentation is applied to rgb_t and rgb_t1 so frame pairs stay consistent.
+    """
+    B = rgb_t.shape[0]
+    device = rgb_t.device
+
+    flip = (torch.rand(B, device=device) < 0.5).float().view(B, 1, 1, 1, 1)
+    rgb_t   = rgb_t   * (1 - flip) + torch.flip(rgb_t,   dims=[-1]) * flip
+    depth_t = depth_t * (1 - flip) + torch.flip(depth_t, dims=[-1]) * flip
+    rgb_t1  = rgb_t1  * (1 - flip) + torch.flip(rgb_t1,  dims=[-1]) * flip
+    depth_t1 = depth_t1 * (1 - flip) + torch.flip(depth_t1, dims=[-1]) * flip
+
+    brightness = torch.empty(B, 1, 1, 1, 1, device=device).uniform_(0.8, 1.2)
+    contrast   = torch.empty(B, 1, 1, 1, 1, device=device).uniform_(-0.1, 0.1)
+    rgb_t  = torch.clamp(rgb_t  * brightness + contrast, 0.0, 1.0)
+    rgb_t1 = torch.clamp(rgb_t1 * brightness + contrast, 0.0, 1.0)
+
+    return rgb_t, depth_t, rgb_t1, depth_t1
 
 # only state-action pair
 class Trainer:
@@ -147,7 +169,21 @@ class Trainer:
             shuffle=True,
             drop_last=True,
             traj_cache_size=vt.get("traj_cache_size", 16),
+            seq_len=vt.get("seq_len", 16),
         )
+
+        test_db_paths = self.config.get("test_db_paths", [])
+        self.test_loader = None
+        if test_db_paths:
+            self.test_loader = load_vision_dataset(
+                db_paths=test_db_paths,
+                batch_size=vt.get("eval_batch_size", 32),
+                shuffle=False,
+                drop_last=False,
+                traj_cache_size=vt.get("traj_cache_size", 16),
+                seq_len=vt.get("seq_len", 16),
+            )
+            print(f"Test dataloader: {len(self.test_loader)} batches")
 
         world_model = CreateWorlModelInstance(self.config, model_type=model_type)
         world_model.train()
@@ -157,68 +193,181 @@ class Trainer:
         model_dir_name = get_model_name(model_type)
         print("this is the model name : ", model_dir_name)
 
-        epochs = vt["epochs"]
-        depth_scale = vt.get("depth_scale", 50.0)
-        rgb_weight = vt.get("rgb_loss_weight", 1.0)
-        depth_weight = vt.get("depth_loss_weight", 1.0)
-        kl_weight = vt.get("kl_weight", 1e-4)
+        epochs        = vt["epochs"]
+        depth_scale   = vt.get("depth_scale", 50.0)
+        rgb_weight    = vt.get("rgb_loss_weight", 1.0)
+        depth_weight  = vt.get("depth_loss_weight", 1.0)
+        lpips_weight  = vt.get("lpips_weight", 0.5)
+        free_bits     = vt.get("free_bits", 1.0)
+        kl_balance    = vt.get("kl_balance", 0.8)
+        augment       = vt.get("augment", True)
+        accum_steps   = max(1, vt.get("grad_accum_steps", 1))
+
+        # Cosine LR schedule with linear warmup
+        # Scheduler steps once per optimizer step (every accum_steps micro-batches).
+        total_steps  = epochs * (len(self.data_loader) // accum_steps)
+        warmup_steps = min(vt.get("warmup_steps", 1000), total_steps // 10)
+        warmup_sched = LinearLR(world_model.optimizer, start_factor=0.01, end_factor=1.0,
+                                total_iters=warmup_steps)
+        cosine_sched = CosineAnnealingLR(world_model.optimizer,
+                                         T_max=max(1, total_steps - warmup_steps),
+                                         eta_min=vt.get("lr_min", vt["learning_rate"] * 0.01))
+        scheduler = SequentialLR(world_model.optimizer,
+                                 schedulers=[warmup_sched, cosine_sched],
+                                 milestones=[warmup_steps])
+
+        print(f"Gradient accumulation: {accum_steps} micro-batches → "
+              f"effective batch = {vt['batch_size'] * accum_steps}")
 
         for epoch in range(1, epochs + 1):
-            epoch_loss = 0.0
-            epoch_rgb = 0.0
-            epoch_depth = 0.0
-            epoch_kl = 0.0
-            num_steps = 0
+            epoch_loss = epoch_rgb = epoch_depth = epoch_kl = epoch_lpips = 0.0
+            micro_count = 0
             print(f"start of epoch {epoch}")
 
-            for batch in self.data_loader:
-                rgb_t = batch["rgb_t"].to(device).float()
-                depth_t = batch["depth_t"].to(device).float() / depth_scale
+            world_model.optimizer.zero_grad()
+
+            for batch_idx, batch in enumerate(self.data_loader):
+                rgb_t    = batch["rgb_t"].to(device).float()
+                depth_t  = batch["depth_t"].to(device).float() / depth_scale
                 action_t = batch["action_t"].to(device).float()
-                rgb_t1 = batch["rgb_t1"].to(device).float()
+                prop_t   = batch["prop_t"].to(device).float()
+                rgb_t1   = batch["rgb_t1"].to(device).float()
                 depth_t1 = batch["depth_t1"].to(device).float() / depth_scale
 
-                outputs = world_model(
-                    rgb_t=rgb_t,
-                    depth_t=depth_t,
-                    action_t=action_t,
-                    rgb_t1=rgb_t1,
-                    depth_t1=depth_t1,
-                )
-                losses = world_model.compute_loss(
-                    outputs=outputs,
-                    rgb_t1=rgb_t1,
-                    depth_t1=depth_t1,
-                    kl_weight=kl_weight,
-                    rgb_weight=rgb_weight,
-                    depth_weight=depth_weight,
-                )
-                total_loss = losses["total_loss"]
+                if augment:
+                    rgb_t, depth_t, rgb_t1, depth_t1 = _augment_batch(
+                        rgb_t, depth_t, rgb_t1, depth_t1
+                    )
 
-                world_model.optimizer.zero_grad()
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(world_model.parameters(), vt.get("grad_clip_norm", 10.0))
+                seq_len = rgb_t.shape[1]
+                hidden_state = None
+                step_loss = step_rgb = step_depth = step_kl = step_lpips = 0.0
+
+                for t in range(seq_len):
+                    outputs = world_model(
+                        rgb_t=rgb_t[:, t],
+                        depth_t=depth_t[:, t],
+                        action_t=action_t[:, t],
+                        rgb_t1=rgb_t1[:, t],
+                        depth_t1=depth_t1[:, t],
+                        hidden_state=hidden_state,
+                        prop_t=prop_t[:, t],
+                    )
+                    losses = world_model.compute_loss(
+                        outputs=outputs,
+                        rgb_t1=rgb_t1[:, t],
+                        depth_t1=depth_t1[:, t],
+                        free_bits=free_bits,
+                        kl_balance=kl_balance,
+                        rgb_weight=rgb_weight,
+                        depth_weight=depth_weight,
+                        lpips_weight=lpips_weight,
+                    )
+                    hidden_state = outputs["hidden_next"]
+                    step_loss  += losses["total_loss"]
+                    step_rgb   += float(losses["rgb_loss"])
+                    step_depth += float(losses["depth_loss"])
+                    step_kl    += float(losses["kl_loss"])
+                    step_lpips += float(losses["perceptual_loss"])
+
+                micro_loss = step_loss / (seq_len * accum_steps)
+                micro_loss.backward()
+                micro_count += 1
+
+                epoch_loss  += step_loss.item() / seq_len
+                epoch_rgb   += step_rgb   / seq_len
+                epoch_depth += step_depth / seq_len
+                epoch_kl    += step_kl    / seq_len
+                epoch_lpips += step_lpips / seq_len
+
+                if micro_count % accum_steps == 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for p in world_model.parameters() if p.requires_grad],
+                        vt.get("grad_clip_norm", 10.0),
+                    )
+                    world_model.optimizer.step()
+                    scheduler.step()
+                    world_model.optimizer.zero_grad()
+
+            # Flush remaining gradients if epoch didn't end on an accum boundary.
+            if micro_count % accum_steps != 0:
+                torch.nn.utils.clip_grad_norm_(
+                    [p for p in world_model.parameters() if p.requires_grad],
+                    vt.get("grad_clip_norm", 10.0),
+                )
                 world_model.optimizer.step()
+                scheduler.step()
+                world_model.optimizer.zero_grad()
 
-                epoch_loss += total_loss.item()
-                epoch_rgb += float(losses["rgb_loss"])
-                epoch_depth += float(losses["depth_loss"])
-                epoch_kl += float(losses["kl_loss"])
-                num_steps += 1
+            n = len(self.data_loader)
+            print(
+                f"epoch {epoch} train | "
+                f"total={epoch_loss / n:.6f} "
+                f"rgb={epoch_rgb / n:.6f} "
+                f"depth={epoch_depth / n:.6f} "
+                f"lpips={epoch_lpips / n:.6f} "
+                f"kl={epoch_kl / n:.6f}"
+            )
 
-            if num_steps > 0:
+            # Per-epoch test evaluation.
+            if self.test_loader is not None:
+                world_model.eval()
+                t_loss = t_rgb = t_depth = t_kl = t_lpips = 0.0
+                with torch.no_grad():
+                    for batch in self.test_loader:
+                        rgb_t    = batch["rgb_t"].to(device).float()
+                        depth_t  = batch["depth_t"].to(device).float() / depth_scale
+                        action_t = batch["action_t"].to(device).float()
+                        prop_t   = batch["prop_t"].to(device).float()
+                        rgb_t1   = batch["rgb_t1"].to(device).float()
+                        depth_t1 = batch["depth_t1"].to(device).float() / depth_scale
+                        seq_len  = rgb_t.shape[1]
+                        hidden_state = None
+                        sl = sl_rgb = sl_depth = sl_kl = sl_lpips = 0.0
+                        for t in range(seq_len):
+                            outputs = world_model(
+                                rgb_t=rgb_t[:, t], depth_t=depth_t[:, t],
+                                action_t=action_t[:, t],
+                                rgb_t1=rgb_t1[:, t], depth_t1=depth_t1[:, t],
+                                hidden_state=hidden_state, prop_t=prop_t[:, t],
+                            )
+                            losses = world_model.compute_loss(
+                                outputs=outputs, rgb_t1=rgb_t1[:, t],
+                                depth_t1=depth_t1[:, t], free_bits=free_bits,
+                                kl_balance=kl_balance, rgb_weight=rgb_weight,
+                                depth_weight=depth_weight, lpips_weight=lpips_weight,
+                            )
+                            hidden_state = outputs["hidden_next"]
+                            sl       += float(losses["total_loss"])
+                            sl_rgb   += float(losses["rgb_loss"])
+                            sl_depth += float(losses["depth_loss"])
+                            sl_kl    += float(losses["kl_loss"])
+                            sl_lpips += float(losses["perceptual_loss"])
+                        t_loss  += sl / seq_len
+                        t_rgb   += sl_rgb / seq_len
+                        t_depth += sl_depth / seq_len
+                        t_kl    += sl_kl / seq_len
+                        t_lpips += sl_lpips / seq_len
+                nt = len(self.test_loader)
                 print(
-                    "epoch metrics | "
-                    f"total={epoch_loss / num_steps:.6f} "
-                    f"rgb={epoch_rgb / num_steps:.6f} "
-                    f"depth={epoch_depth / num_steps:.6f} "
-                    f"kl={epoch_kl / num_steps:.6f}"
+                    f"epoch {epoch} test  | "
+                    f"total={t_loss / nt:.6f} "
+                    f"rgb={t_rgb / nt:.6f} "
+                    f"depth={t_depth / nt:.6f} "
+                    f"lpips={t_lpips / nt:.6f} "
+                    f"kl={t_kl / nt:.6f}"
                 )
+                world_model.train()
+
             print(f"end of epoch {epoch}\n\n")
 
-            if epoch % self.config["save_freq"] == 0:
+            if epoch % self.config["model_save_freq"] == 0:
                 model_name = f"{model_type}-epoch_{epoch}.pth"
                 SaveModel(world_model, model_name, model_dir_name)
+
+            if epoch % self.config["ckpt_save_freq"] == 0:
+                ckpt_name = f"{model_type}-ckpt-epoch_{epoch}.pth"
+                SaveCkpt(world_model, ckpt_name, model_dir_name, epoch, epoch_loss)
 
 
     

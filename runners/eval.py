@@ -349,13 +349,8 @@ class Inference:
             shuffle=False,
             drop_last=False,
             traj_cache_size=vt.get("traj_cache_size", 16),
+            seq_len=vt.get("seq_len", 8),
         )
-        batch = next(iter(data_loader))
-        rgb_t = batch["rgb_t"].to(device).float()
-        depth_t = batch["depth_t"].to(device).float() / vt.get("depth_scale", 50.0)
-        action_t = batch["action_t"].to(device).float()
-        rgb_t1 = batch["rgb_t1"].to(device).float()
-        depth_t1 = batch["depth_t1"].to(device).float() / vt.get("depth_scale", 50.0)
 
         model_name = self.config["model_name"]
         model_dir_name = self.config["model_dir_name"]
@@ -363,23 +358,65 @@ class Inference:
         world_model = LoadModel(world_model, model_name, model_dir_name)
         world_model.eval()
 
+        depth_scale  = vt.get("depth_scale", 50.0)
+        free_bits    = vt.get("free_bits", 1.0)
+        kl_balance   = vt.get("kl_balance", 0.8)
+        rgb_weight   = vt.get("rgb_loss_weight", 1.0)
+        depth_weight = vt.get("depth_loss_weight", 1.0)
+        lpips_weight = vt.get("lpips_weight", 0.5)
+
+        total_loss = rgb_loss = depth_loss = kl_loss = perceptual_loss = 0.0
         with torch.no_grad():
-            outputs = world_model(
-                rgb_t=rgb_t, depth_t=depth_t, action_t=action_t, rgb_t1=rgb_t1, depth_t1=depth_t1
-            )
-            losses = world_model.compute_loss(
-                outputs=outputs,
-                rgb_t1=rgb_t1,
-                depth_t1=depth_t1,
-                kl_weight=vt.get("kl_weight", 1e-4),
-                rgb_weight=vt.get("rgb_loss_weight", 1.0),
-                depth_weight=vt.get("depth_loss_weight", 1.0),
-            )
-        print("Vision eval batch metrics:")
-        print(f"total_loss={float(losses['total_loss']):.6f}")
-        print(f"rgb_loss={float(losses['rgb_loss']):.6f}")
-        print(f"depth_loss={float(losses['depth_loss']):.6f}")
-        print(f"kl_loss={float(losses['kl_loss']):.6f}")
+            for batch in data_loader:
+                rgb_t    = batch["rgb_t"].to(device).float()
+                depth_t  = batch["depth_t"].to(device).float() / depth_scale
+                action_t = batch["action_t"].to(device).float()
+                prop_t   = batch["prop_t"].to(device).float()
+                rgb_t1   = batch["rgb_t1"].to(device).float()
+                depth_t1 = batch["depth_t1"].to(device).float() / depth_scale
+
+                seq_len = rgb_t.shape[1]
+                hidden_state = None
+                step_loss = step_rgb = step_depth = step_kl = 0.0
+
+                for t in range(seq_len):
+                    outputs = world_model(
+                        rgb_t=rgb_t[:, t], depth_t=depth_t[:, t],
+                        action_t=action_t[:, t],
+                        rgb_t1=rgb_t1[:, t], depth_t1=depth_t1[:, t],
+                        hidden_state=hidden_state,
+                        prop_t=prop_t[:, t],
+                    )
+                    losses = world_model.compute_loss(
+                        outputs=outputs,
+                        rgb_t1=rgb_t1[:, t],
+                        depth_t1=depth_t1[:, t],
+                        free_bits=free_bits,
+                        kl_balance=kl_balance,
+                        rgb_weight=rgb_weight,
+                        depth_weight=depth_weight,
+                        lpips_weight=lpips_weight,
+                    )
+                    hidden_state = outputs["hidden_next"]
+                    step_loss  += float(losses["total_loss"])
+                    step_rgb   += float(losses["rgb_loss"])
+                    step_depth += float(losses["depth_loss"])
+                    step_kl    += float(losses["kl_loss"])
+                    step_lpips  = float(losses.get("perceptual_loss", 0.0))
+
+                total_loss      += step_loss  / seq_len
+                rgb_loss        += step_rgb   / seq_len
+                depth_loss      += step_depth / seq_len
+                kl_loss         += step_kl    / seq_len
+                perceptual_loss += step_lpips / seq_len
+
+        n = len(data_loader)
+        print("Vision eval metrics (avg over dataset):")
+        print(f"  total_loss={total_loss / n:.6f}")
+        print(f"  rgb_loss={rgb_loss / n:.6f}")
+        print(f"  depth_loss={depth_loss / n:.6f}")
+        print(f"  lpips_loss={perceptual_loss / n:.6f}")
+        print(f"  kl_loss={kl_loss / n:.6f}")
 
         
 
