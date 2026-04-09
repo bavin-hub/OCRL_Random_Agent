@@ -19,7 +19,7 @@ Two world model variants:
 
 ### Vision World Model (`wm_vision_rssm`)
 
-RSSM with a 6-stage ResNet encoder/decoder for 256x256 RGB-D, GRU dynamics, and discrete categorical latents (DreamerV3-style).
+RSSM with a 6-stage ResNet encoder/decoder for 256x256 RGB-D, GRU dynamics, and discrete categorical latents.
 
 ```
 RGB-D(t) + Action(t) + Prop(t) → Encoder → Prior/Posterior → GRU → Decoder → RGB-D(t+1)
@@ -49,6 +49,8 @@ python scripts/play.py Unitree-G1-Flat-With-Terrain \
 ```
 
 ### Tracking policy
+
+Remember to match csv converted motion file(npz) and .pt
 
 ```bash
 cd data/baseline_policies/unitree_rl_mjlab
