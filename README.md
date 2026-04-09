@@ -92,6 +92,24 @@ python main.py \
   --test_dirs  data/pretraining_rollouts/run3
 ```
 
+### With W&B logging
+
+Add `--wandb_project` to log training/test metrics to Weights & Biases:
+
+```bash
+python main.py \
+  --model_type wm_vision_rssm \
+  --run_mode train \
+  --train_dirs data/pretraining_rollouts/25000_transitions/2026-04-08_13-45-36 \
+  --split 0.8 \
+  --wandb_project my-world-model \
+  --wandb_run_name run1
+```
+
+Optional flags: `--wandb_entity <team>`, `--wandb_run_name <name>`.
+
+If `--wandb_project` is empty (default), no logging happens and wandb is not required.
+
 ### State-based world model
 
 ```bash
@@ -128,6 +146,14 @@ Training hyperparameters live in `config.json`. Key vision model settings:
 | `epochs` | 300 | Training epochs |
 | `lpips_weight` | 0.5 | Perceptual loss weight (VGG-based) |
 | `depth_scale` | 50.0 | Depth normalization divisor |
+
+W&B args (CLI only, not in config.json):
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--wandb_project` | `""` | W&B project name. Empty = disabled |
+| `--wandb_run_name` | `""` | Run name (shows in W&B UI) |
+| `--wandb_entity` | `""` | W&B team/entity |
 
 ---
 

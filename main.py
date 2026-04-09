@@ -47,7 +47,9 @@ parser.add_argument(
     default=42,
     help='Random seed used for the train/test shuffle-split.',
 )
-
+parser.add_argument('--wandb_project', default='', help='W&B project name. Empty = no logging.')
+parser.add_argument('--wandb_run_name', default='', help='W&B run name (optional).')
+parser.add_argument('--wandb_entity', default='', help='W&B entity/team (optional).')
 
 
 def combine_trajectories(transitions_path: str):
@@ -193,6 +195,9 @@ def run(args):
     config['test_db_paths']   = [os.path.abspath(p) for p in test_db_paths]
     config['combined_db_path'] = os.path.join(db_base, 'combined_transitions.db')
     config["run_mode"] = args.run_mode
+    config["wandb_project"]  = (args.wandb_project or "").strip()
+    config["wandb_run_name"] = (args.wandb_run_name or "").strip()
+    config["wandb_entity"]   = (args.wandb_entity or "").strip()
 
     # Combined DB only needed for state-based world model.
     if args.model_type != "wm_vision_rssm":

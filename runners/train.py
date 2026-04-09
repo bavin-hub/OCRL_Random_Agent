@@ -8,6 +8,27 @@ import time
 from data.preprocessor import load_vision_dataset
 
 
+def _wandb_init(config: dict, extra_tags: dict | None = None):
+    """Start a W&B run if --wandb_project was provided. Returns the wandb module or None."""
+    project = config.get("wandb_project", "")
+    if not project:
+        return None
+    try:
+        import wandb
+    except ImportError:
+        print("wandb not installed, skipping. pip install wandb")
+        return None
+    kw = {"project": project, "config": extra_tags or {}}
+    entity = config.get("wandb_entity", "")
+    if entity:
+        kw["entity"] = entity
+    name = config.get("wandb_run_name", "")
+    if name:
+        kw["name"] = name
+    wandb.init(**kw)
+    return wandb
+
+
 def _augment_batch(rgb_t, depth_t, rgb_t1, depth_t1):
     """Random horizontal flip + brightness/contrast jitter on (B, T, C, H, W) batches.
     Same augmentation is applied to rgb_t and rgb_t1 so frame pairs stay consistent.
@@ -163,6 +184,8 @@ class Trainer:
         device = self.config["device"] if torch.cuda.is_available() else "cpu"
         db_paths = self.config.get("db_paths") or [self.config["db_path"]]
 
+        wb = _wandb_init(self.config, extra_tags=vt)
+
         self.data_loader = load_vision_dataset(
             db_paths=db_paths,
             batch_size=vt["batch_size"],
@@ -300,14 +323,25 @@ class Trainer:
                 world_model.optimizer.zero_grad()
 
             n = len(self.data_loader)
+            train_metrics = {
+                "train/total": epoch_loss / n,
+                "train/rgb": epoch_rgb / n,
+                "train/depth": epoch_depth / n,
+                "train/lpips": epoch_lpips / n,
+                "train/kl": epoch_kl / n,
+                "lr": scheduler.get_last_lr()[0],
+                "epoch": epoch,
+            }
             print(
                 f"epoch {epoch} train | "
-                f"total={epoch_loss / n:.6f} "
-                f"rgb={epoch_rgb / n:.6f} "
-                f"depth={epoch_depth / n:.6f} "
-                f"lpips={epoch_lpips / n:.6f} "
-                f"kl={epoch_kl / n:.6f}"
+                f"total={train_metrics['train/total']:.6f} "
+                f"rgb={train_metrics['train/rgb']:.6f} "
+                f"depth={train_metrics['train/depth']:.6f} "
+                f"lpips={train_metrics['train/lpips']:.6f} "
+                f"kl={train_metrics['train/kl']:.6f}"
             )
+            if wb:
+                wb.log(train_metrics, step=epoch)
 
             # Per-epoch test evaluation.
             if self.test_loader is not None:
@@ -349,14 +383,23 @@ class Trainer:
                         t_kl    += sl_kl / seq_len
                         t_lpips += sl_lpips / seq_len
                 nt = len(self.test_loader)
+                test_metrics = {
+                    "test/total": t_loss / nt,
+                    "test/rgb": t_rgb / nt,
+                    "test/depth": t_depth / nt,
+                    "test/lpips": t_lpips / nt,
+                    "test/kl": t_kl / nt,
+                }
                 print(
                     f"epoch {epoch} test  | "
-                    f"total={t_loss / nt:.6f} "
-                    f"rgb={t_rgb / nt:.6f} "
-                    f"depth={t_depth / nt:.6f} "
-                    f"lpips={t_lpips / nt:.6f} "
-                    f"kl={t_kl / nt:.6f}"
+                    f"total={test_metrics['test/total']:.6f} "
+                    f"rgb={test_metrics['test/rgb']:.6f} "
+                    f"depth={test_metrics['test/depth']:.6f} "
+                    f"lpips={test_metrics['test/lpips']:.6f} "
+                    f"kl={test_metrics['test/kl']:.6f}"
                 )
+                if wb:
+                    wb.log(test_metrics, step=epoch)
                 world_model.train()
 
             print(f"end of epoch {epoch}\n\n")
@@ -369,5 +412,6 @@ class Trainer:
                 ckpt_name = f"{model_type}-ckpt-epoch_{epoch}.pth"
                 SaveCkpt(world_model, ckpt_name, model_dir_name, epoch, epoch_loss)
 
+        if wb:
+            wb.finish()
 
-    
