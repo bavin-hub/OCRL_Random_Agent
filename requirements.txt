@@ -1,0 +1,14 @@
+torch>=2.11.0
+torchvision>=0.26.0
+mujoco>=3.6.0
+mujoco-warp>=3.6.0
+mjlab>=1.2.0
+lpips
+wandb
+numpy
+opencv-python
+open3d
+matplotlib
+tqdm
+scipy
+pillow
