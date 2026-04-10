@@ -196,6 +196,20 @@ class BaseViewer(ABC):
     self.transitions_per_trajectory = 1000
     self.idx = 0
     self._replay_initial_state_set = False
+    self.my_scale = torch.tensor([[0.5475, 0.3507, 0.5475, 0.3507, 0.4386, 0.4386, 0.5475, 0.3507, 0.5475,
+                                  0.3507, 0.4386, 0.4386, 0.5475, 0.4386, 0.4386, 0.4386, 0.4386, 0.4386,
+                                  0.4386, 0.4386, 0.0745, 0.0745, 0.4386, 0.4386, 0.4386, 0.4386, 0.4386,
+                                  0.0745, 0.0745]], device="cuda")
+
+    self.offset = torch.tensor([[-0.1000,  0.0000,  0.0000,  0.3000, -0.2000,  0.0000, -0.1000,  0.0000,
+          0.0000,  0.3000, -0.2000,  0.0000,  0.0000,  0.0000,  0.0000,  0.3500,
+          0.1800,  0.0000,  0.8700,  0.0000,  0.0000,  0.0000,  0.3500, -0.1800,
+          0.0000,  0.8700,  0.0000,  0.0000,  0.0000]], device="cuda")
+    0.0000
+    self.encoder_bias = torch.tensor([[-0.0105, -0.0072,  0.0104, -0.0004, -0.0073, -0.0048,  0.0117, -0.0111,
+          0.0054, -0.0060, -0.0035,  0.0086,  0.0087,  0.0110,  0.0012,  0.0027,
+         -0.0042,  0.0071,  0.0087,  0.0041, -0.0120, -0.0095, -0.0077, -0.0123,
+          0.0083,  0.0109, -0.0094, -0.0075, -0.0040]], device="cuda")
     # change ends #
 
     # Action queue, drained on main thread each tick.
@@ -398,6 +412,11 @@ class BaseViewer(ABC):
     return st_out, tgt_out
 
 
+  def scale_policy_actions(self, policy_actions):
+    return ((policy_actions*self.my_scale) + self.offset) 
+
+
+
   def extract_observation_vectors(self, env, st, policy_at, ct, env_id=0):
     """Extract [base_lin_vel, base_ang_vel, gravity_proj, joint_pos, joint_vel, joint_torque],
        [body_contact, foot_heights, foot_velocities], and target actions from current state.
@@ -448,7 +467,8 @@ class BaseViewer(ABC):
 
     # --- Target actions (joint position targets fed to the robot) ---
     target_actions = robot.data.joint_pos_target[env_id].cpu().numpy()
-
+    # print("target actions while saving : ", target_actions)
+    # print("\n\n")
     # print(policy_at.cpu().numpy().squeeze().shape)
 
     # print('\n\nafter step : ', target_actions)
@@ -475,6 +495,12 @@ class BaseViewer(ABC):
     #                           ct.tolist(), 
     #                           target_n.tolist(),
     #                           policy_at.cpu().numpy().squeeze().tolist()))
+
+    # scaled actions without encoder bias (encoder bias is sampled randomly for every run)
+    scaled_policy_at = self.scale_policy_actions(policy_at).cpu().numpy().squeeze()
+
+    # print("scaled policy manually : ", scaled_policy_at, " ", scaled_policy_at.shape)
+
     self.local_buffer.append((st.tolist(), 
                               ct.tolist(), 
                               target_actions.tolist(),
@@ -570,19 +596,22 @@ class BaseViewer(ABC):
         obs = self.env.get_observations()
         actions = self.policy(obs)
 
+
+        # print(actions.shape)
         # change starts #
         st = self.get_state(base_env)
         ct = self.get_contact(base_env)
         # change ends
 
         self.env.step(actions)
+        # print("direct policy output : ", actions)
 
         # change starts #
         self.incremental_step += 1
         self.extract_observation_vectors(base_env, st=st, policy_at=actions, ct=ct)
         if self.incremental_step % self.transitions_per_trajectory == 0 and self.incremental_step != 0:
             self.trajectory_ctr += 1
-            self.save_trajectory()
+            # self.save_trajectory()
             print(
               f"\n\nTrajectory {self.trajectory_ctr} saved to {self.db_path!r}\n"
             )

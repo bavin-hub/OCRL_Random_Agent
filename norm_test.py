@@ -43,6 +43,28 @@ print(state_action_arr.shape)
 mean = np.mean(state_action_arr, axis=0, dtype=np.float32)
 std = np.std(state_action_arr, axis=0, dtype=np.float32)
 
+
+
+import matplotlib.pyplot as plt
+
+# Data for first line
+x = [i for i in range(29)]
+y1 = state_action_arr[2, 96:]
+
+# Data for second line
+y2 = state_action_arr[2, 9:38]
+
+# Plotting both lines
+plt.plot(x, y1, label='action at')
+plt.plot(x, y2, label='state t+1')
+
+# Customizing the graph
+plt.xlabel('X Axis')
+plt.ylabel('Y Axis')
+plt.title('diff in at and st+1')
+plt.legend() # Displays labels to identify lines
+plt.show()
+
 np.set_printoptions(suppress=True, precision=3)
 print("Mean values of state")
 print(mean[:3])
