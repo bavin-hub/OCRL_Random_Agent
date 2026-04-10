@@ -58,17 +58,20 @@ def combine_trajectories(transitions_path: str):
 
     all_transitions_path = os.path.join(os.getcwd(), f"data/{transitions_path}")
     all_transition_dbs = os.listdir(all_transitions_path)
-    combined_transitions = []
-    for file in all_transition_dbs:
-        db_path = os.path.join(all_transitions_path, file)
-        # print(db_path)
-        all_rows_single_db = get_all_rows_per_db(db_path)
-        
-        combined_transitions += all_rows_single_db
+    if "combined_transitions.db" not in all_transition_dbs:
+        combined_transitions = []
+        for file in all_transition_dbs:
+            db_path = os.path.join(all_transitions_path, file)
+            # print(db_path)
+            all_rows_single_db = get_all_rows_per_db(db_path)
+            
+            combined_transitions += all_rows_single_db
 
 
-    save_mergerd_transitions(all_transitions_path,
-                         combined_transitions)
+        save_mergerd_transitions(all_transitions_path,
+                            combined_transitions)
+    else:
+        print("Combined transitions already exists")
 
 
 
