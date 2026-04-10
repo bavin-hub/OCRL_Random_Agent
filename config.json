@@ -6,7 +6,7 @@
         "N": 8,
         "M": 32,
         "learning_rate": 0.001,
-        "weight_decay": 0,
+        "weight_decay": 1e-5,
         "forecast_decay": 1.0,
         "step_time_seconds": 0.02,
         "N_pred": 120
@@ -68,7 +68,7 @@
     "save_world_model": true,
     "save_policy": true,
     "save_world_model_train_logs_csv": true,
-    "model_save_freq": 5,
+    "model_save_freq": 1,
     "ckpt_save_freq": 5,
     "mean_state_action": [
         0.0,

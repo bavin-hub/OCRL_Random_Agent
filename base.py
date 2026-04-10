@@ -730,7 +730,7 @@ class BaseViewer(ABC):
     self._rollout_output_dir = None
     if db_dir is not None:
       n_transitions = self.buffer_size_d * self.transitions_per_trajectory
-      folder_name = f"{n_transitions}_transitions"
+      folder_name = f"{n_transitions}_transitions_during_inference"
       self._rollout_output_dir = os.path.join(db_dir, folder_name)
       os.makedirs(self._rollout_output_dir, exist_ok=True)
       print(f"Per-trajectory rollouts directory: {self._rollout_output_dir}")
