@@ -253,6 +253,44 @@ def _extract_done(transition) -> bool:
     return isinstance(last, int) and bool(last)
 
 
+def _find_project_root() -> str:
+    candidate = os.path.abspath(os.path.dirname(__file__))
+    for _ in range(6):
+        if os.path.isfile(os.path.join(candidate, "main.py")) and os.path.isdir(os.path.join(candidate, "data")):
+            return candidate
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            break
+        candidate = parent
+    return os.path.abspath(os.path.dirname(__file__))
+
+_PROJECT_ROOT = _find_project_root()
+
+_PATH_KEYS = frozenset(("rgb_path", "depth_path", "rgb_t_path", "depth_t_path",
+                         "rgb_t1_path", "depth_t1_path"))
+
+def _resolve_path(p: str) -> str:
+    """Resolve a path that may be relative (new format) or absolute (legacy).
+
+    Relative paths are resolved against the project root.
+    Absolute paths that don't exist are attempted with the project root prefix
+    stripped and re-resolved (handles data moved from another machine).
+    """
+    if not os.path.isabs(p):
+        return os.path.join(_PROJECT_ROOT, p)
+    if os.path.exists(p):
+        return p
+    # Legacy absolute path from a different machine — try to extract the
+    # relative portion after the project directory name.
+    marker = "OCRL_Random_Agent" + os.sep
+    idx = p.find(marker)
+    if idx != -1:
+        relative = p[idx + len(marker):]
+        resolved = os.path.join(_PROJECT_ROOT, relative)
+        if os.path.exists(resolved):
+            return resolved
+    return p
+
 def _extract_rgbd_record(transition):
     if not isinstance(transition, (list, tuple)):
         return None
@@ -261,11 +299,26 @@ def _extract_rgbd_record(transition):
     meta = transition[4]
     if not isinstance(meta, dict):
         return None
+    meta = {k: (_resolve_path(v) if k in _PATH_KEYS and isinstance(v, str) else v)
+            for k, v in meta.items()}
     if ("rgb_t_path" in meta and "depth_t_path" in meta and "rgb_t1_path" in meta and "depth_t1_path" in meta):
         return meta
     if ("rgb_path" in meta and "depth_path" in meta):
         return meta
     return None
+
+
+def _resize_chw(img: np.ndarray, target_hw: tuple[int, int] | None) -> np.ndarray:
+    """Resize a (C, H, W) array to (C, target_h, target_w) using area interpolation."""
+    if target_hw is None or (img.shape[1] == target_hw[0] and img.shape[2] == target_hw[1]):
+        return img
+    import cv2
+    C = img.shape[0]
+    hwc = np.transpose(img, (1, 2, 0))
+    hwc = cv2.resize(hwc, (target_hw[1], target_hw[0]), interpolation=cv2.INTER_AREA)
+    if hwc.ndim == 2:
+        hwc = hwc[:, :, None]
+    return np.transpose(hwc, (2, 0, 1))
 
 
 def _as_chw_rgb(rgb: np.ndarray) -> np.ndarray:
@@ -302,9 +355,11 @@ class VisionTransitionDataset(Dataset):
 
     _PROP_SLICE = slice(0, 38)
 
-    def __init__(self, db_path: str = None, db_paths=None, traj_cache_size: int = 16, seq_len: int = 8):
+    def __init__(self, db_path: str = None, db_paths=None, traj_cache_size: int = 16, seq_len: int = 8,
+                 target_size: tuple[int, int] | None = None):
         self.db_paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
         self.seq_len = seq_len
+        self._target_size = target_size
         self._traj_cache = OrderedDict()
         self._traj_cache_limit = max(1, int(traj_cache_size))
         self._sources = []  # (db_file, rowid)
@@ -379,8 +434,13 @@ class VisionTransitionDataset(Dataset):
         frames_depth = []
         for k in range(self.seq_len + 1):
             meta = _extract_rgbd_record(traj[start_t + k])
-            frames_rgb.append(_as_chw_rgb(np.load(meta["rgb_path"])))
-            frames_depth.append(_as_chw_depth(np.load(meta["depth_path"])))
+            rgb = _as_chw_rgb(np.load(meta["rgb_path"]))
+            depth = _as_chw_depth(np.load(meta["depth_path"]))
+            if self._target_size is not None:
+                rgb = _resize_chw(rgb, self._target_size)
+                depth = _resize_chw(depth, self._target_size)
+            frames_rgb.append(rgb)
+            frames_depth.append(depth)
 
         return {
             "rgb_t":    np.stack(frames_rgb[:-1]),    # (seq_len, 3, H, W)
@@ -406,7 +466,9 @@ def load_vision_dataset(
     drop_last: bool = True,
     traj_cache_size: int = 16,
     seq_len: int = 8,
+    target_size: tuple[int, int] | None = None,
 ):
     paths = _normalize_db_paths(db_path=db_path, db_paths=db_paths)
-    dataset = VisionTransitionDataset(db_paths=paths, traj_cache_size=traj_cache_size, seq_len=seq_len)
+    dataset = VisionTransitionDataset(db_paths=paths, traj_cache_size=traj_cache_size, seq_len=seq_len,
+                                      target_size=target_size)
     return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)

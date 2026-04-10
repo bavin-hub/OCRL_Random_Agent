@@ -214,6 +214,19 @@ class BaseViewer(ABC):
     # Action queue, drained on main thread each tick.
     self._actions: deque[tuple[ViewerAction, Optional[Any]]] = deque()
 
+  @staticmethod
+  def _find_project_root() -> str:
+    """Return the project root directory (the folder containing main.py and data/)."""
+    candidate = os.path.abspath(os.path.dirname(__file__))
+    for _ in range(6):
+      if os.path.isfile(os.path.join(candidate, "main.py")) and os.path.isdir(os.path.join(candidate, "data")):
+        return candidate
+      parent = os.path.dirname(candidate)
+      if parent == candidate:
+        break
+      candidate = parent
+    return os.path.abspath(os.path.dirname(__file__))
+
   # Abstract hooks.
 
   @abstractmethod
@@ -444,11 +457,12 @@ class BaseViewer(ABC):
     np.save(rgb_path, rgb_t)
     np.save(depth_path, depth_t)
 
+    project_root = self._find_project_root()
     return {
       "camera": self._rgbd_camera,
       "step_idx_in_traj": int(step_idx),
-      "rgb_path": os.path.abspath(rgb_path),
-      "depth_path": os.path.abspath(depth_path),
+      "rgb_path": os.path.relpath(os.path.abspath(rgb_path), start=project_root),
+      "depth_path": os.path.relpath(os.path.abspath(depth_path), start=project_root),
     }
 
   def extract_observation_vectors(self, env, st, policy_at, ct, env_id=0, rgbd_record: Optional[dict] = None, done: bool = False):

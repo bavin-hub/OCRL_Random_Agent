@@ -20,8 +20,8 @@
                                "with_uncertainity":false},
 
     "vision_world_model_arch_params":{
-                               "image_height":256,
-                               "image_width":256,
+                               "image_height":128,
+                               "image_width":128,
                                "cnn_embed_dim":512,
                                "action_embed_dim":128,
                                "num_categories":32,
@@ -31,11 +31,12 @@
                                "prop_embed_dim":64},
 
     "vision_world_model_training_params":{
-                               "epochs":400,
+                               "epochs":70,
                                "batch_size":16,
                                "eval_batch_size":8,
                                "grad_accum_steps":4,
                                "seq_len":40,
+                               "tbptt_chunk":16,
                                "learning_rate":1e-4,
                                "lr_min":1e-6,
                                "warmup_steps":1000,
@@ -47,8 +48,8 @@
                                "augment":true,
                                "depth_scale":50.0,
                                "grad_clip_norm":10.0,
-                               "lpips_weight":0.5,
-                               "traj_cache_size":16},
+                               "traj_cache_size":16,
+                               "max_eval_batches":200},
 
     
     "policy_arch_params":{"policy":{"mlp_hiddens":[128,128,128],

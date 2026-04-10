@@ -1,13 +1,9 @@
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 import torch.optim as optim
-
-try:
-    import lpips as _lpips_module
-    _LPIPS_AVAILABLE = True
-except ImportError:
-    _LPIPS_AVAILABLE = False
 
 
 class ResBlock(nn.Module):
@@ -25,18 +21,20 @@ class ResBlock(nn.Module):
         self.act = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # original input + residual connection (delta(x))
         return self.act(x + self.net(x))
 
 
 class VisionRssmWorldModel(nn.Module):
     """Vision world model: RGB-D(t) + action(t) -> predicted RGB-D(t+1).
 
-    RSSM with discrete categorical latents (DreamerV3-style), 6-stage
-    ResNet encoder/decoder for 256x256, U-Net skip connections, GRU
-    dynamics, and LPIPS perceptual loss.
+    RSSM with discrete categorical latents, multi-stage
+    ResNet encoder/decoder with U-Net skip connections and GRU dynamics.
+    Number of encoder/decoder stages adapts to image resolution so the
+    bottleneck spatial size is always 4x4.
     """
-
-    _ENC_CHANNELS = (4, 64, 96, 128, 192, 256, 384)
+    # lookup table for number of channels in each stage
+    _ALL_CHANNELS = (4, 64, 96, 128, 192, 256, 384)
 
     def __init__(
         self,
@@ -63,11 +61,16 @@ class VisionRssmWorldModel(nn.Module):
         self.hidden_dim     = hidden_dim
         self.prop_dim       = prop_dim
 
-        ch = self._ENC_CHANNELS
+        # Determine number of stages to reach a 4x4 bottleneck
+        self.n_stages = int(math.log2(image_height // 4))
+        assert 2 ** self.n_stages * 4 == image_height, \
+            f"image_height must be a power-of-2 multiple of 4, got {image_height}"
+            #channles + input channels
+        ch = self._ALL_CHANNELS[:self.n_stages + 1]
 
-        # Encoder: 6 conv+resblock stages, each halving spatial dims (256 -> 4)
+        #pytorch model list
         self.enc_stages = nn.ModuleList()
-        for i in range(6):
+        for i in range(self.n_stages):
             self.enc_stages.append(nn.Sequential(
                 nn.Conv2d(ch[i], ch[i + 1], kernel_size=4, stride=2, padding=1, bias=False),
                 nn.GroupNorm(min(32, ch[i + 1]), ch[i + 1]),
@@ -75,8 +78,8 @@ class VisionRssmWorldModel(nn.Module):
                 ResBlock(ch[i + 1]),
             ))
 
-        bottleneck_spatial = image_height // 64
-        bottleneck_flat = ch[6] * bottleneck_spatial * bottleneck_spatial
+        bottleneck_spatial = 4
+        bottleneck_flat = ch[self.n_stages] * bottleneck_spatial * bottleneck_spatial
 
         self.encoder_proj = nn.Sequential(
             nn.Linear(bottleneck_flat, cnn_embed_dim),
@@ -132,13 +135,14 @@ class VisionRssmWorldModel(nn.Module):
             nn.SiLU(),
         )
 
+        n = self.n_stages
         self.dec_ups = nn.ModuleList()
         self.dec_convs = nn.ModuleList()
-        dec_ch_in   = [ch[6], ch[5], ch[4], ch[3], ch[2], ch[1]]
-        dec_skip_ch = [ch[5], ch[4], ch[3], ch[2], ch[1], 0]
-        dec_ch_out  = [ch[5], ch[4], ch[3], ch[2], ch[1], 32]
+        dec_ch_in   = [ch[n - i] for i in range(n)]
+        dec_skip_ch = [ch[n - 1 - i] if i < n - 1 else 0 for i in range(n)]
+        dec_ch_out  = [ch[n - 1 - i] if i < n - 1 else 32 for i in range(n)]
 
-        for i in range(6):
+        for i in range(n):
             self.dec_ups.append(nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False))
             in_c = dec_ch_in[i] + dec_skip_ch[i]
             out_c = dec_ch_out[i]
@@ -159,14 +163,6 @@ class VisionRssmWorldModel(nn.Module):
         self.rgb_head   = nn.Conv2d(32, 3, kernel_size=3, padding=1)
         self.depth_head = nn.Conv2d(32, 1, kernel_size=3, padding=1)
 
-        # Frozen VGG net for perceptual loss
-        self._lpips_net = None
-        if _LPIPS_AVAILABLE:
-            self._lpips_net = _lpips_module.LPIPS(net='vgg')
-            self._lpips_net.eval()
-            for p in self._lpips_net.parameters():
-                p.requires_grad = False
-
         self.optimizer = optim.Adam(
             (p for p in self.parameters() if p.requires_grad),
             lr=lr, weight_decay=weight_decay,
@@ -178,8 +174,11 @@ class VisionRssmWorldModel(nn.Module):
         x = torch.cat([rgb, depth], dim=1)
         skips = []
         for i, stage in enumerate(self.enc_stages):
-            x = stage(x)
-            if i < 5:
+            if self.training and torch.is_grad_enabled():
+                x = checkpoint(stage, x, use_reentrant=False)
+            else:
+                x = stage(x)
+            if i < self.n_stages - 1:
                 skips.append(x)
         emb = self.encoder_proj(x.flatten(start_dim=1))
         return emb, tuple(skips)
@@ -187,16 +186,19 @@ class VisionRssmWorldModel(nn.Module):
     def _decode(self, z: torch.Tensor, h: torch.Tensor, skips: tuple):
         """Reconstruct RGB-D from latent z + hidden h, using encoder skips."""
         bsz = z.shape[0]
-        bottleneck_spatial = self.image_height // 64
+        ch = self._ALL_CHANNELS[:self.n_stages + 1]
         x = self.decoder_fc(torch.cat([z, h], dim=-1))
-        x = x.reshape(bsz, self._ENC_CHANNELS[6], bottleneck_spatial, bottleneck_spatial)
+        x = x.reshape(bsz, ch[self.n_stages], 4, 4)
 
         rev_skips = list(reversed(skips)) + [None]
-        for i in range(6):
+        for i in range(self.n_stages):
             x = self.dec_ups[i](x)
             if rev_skips[i] is not None:
                 x = torch.cat([x, rev_skips[i]], dim=1)
-            x = self.dec_convs[i](x)
+            if self.training and torch.is_grad_enabled():
+                x = checkpoint(self.dec_convs[i], x, use_reentrant=False)
+            else:
+                x = self.dec_convs[i](x)
 
         return torch.sigmoid(self.rgb_head(x)), self.depth_head(x)
 
@@ -206,6 +208,8 @@ class VisionRssmWorldModel(nn.Module):
         logits = logits.reshape(B, self.num_categories, self.num_classes)
         probs  = F.softmax(logits, dim=-1)
         one_hot = F.one_hot(probs.argmax(dim=-1), self.num_classes).float()
+        #forward_pass: prob detach is just prob, so one hot - prob.detach() + prob = one hot + 0
+        #backward_pass: prob detach is explicilty detached, but prob is not so one hot - prob.detach() + prob = one hot + prob
         z = (one_hot - probs.detach() + probs).reshape(B, -1)
         return z, probs
 
@@ -220,12 +224,6 @@ class VisionRssmWorldModel(nn.Module):
 
     def _symlog_mse(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return F.mse_loss(self._symlog(pred), self._symlog(target))
-
-    def _lpips_loss(self, pred_rgb: torch.Tensor, target_rgb: torch.Tensor) -> torch.Tensor:
-        """Perceptual distance in VGG feature space. Inputs should be [0,1]."""
-        if self._lpips_net is None:
-            return torch.tensor(0.0, device=pred_rgb.device)
-        return self._lpips_net(pred_rgb * 2.0 - 1.0, target_rgb * 2.0 - 1.0).mean()
 
     def forward(
         self,
@@ -324,33 +322,24 @@ class VisionRssmWorldModel(nn.Module):
         kl_balance: float = 0.8,
         rgb_weight: float = 1.0,
         depth_weight: float = 1.0,
-        lpips_weight: float = 0.5,
     ):
         rgb_loss   = self._symlog_mse(outputs["pred_rgb_t1"],   rgb_t1)
         depth_loss = self._symlog_mse(outputs["pred_depth_t1"], depth_t1)
 
-        perceptual_loss = torch.tensor(0.0, device=rgb_t1.device)
-        if lpips_weight > 0:
-            perceptual_loss = self._lpips_loss(outputs["pred_rgb_t1"], rgb_t1)
-
         post_probs  = outputs["post_probs"]
         prior_probs = outputs["prior_probs"]
 
-        # KL balancing: mostly train the prior to match posterior (dynamics loss),
-        # with a smaller term training the posterior (representation loss).
+        #KL balancing:
+        
         dynamics_loss = self._kl_categorical(post_probs.detach(), prior_probs,          free_bits)
         repr_loss     = self._kl_categorical(post_probs,          prior_probs.detach(), free_bits)
         kl_loss       = kl_balance * dynamics_loss + (1.0 - kl_balance) * repr_loss
 
-        total = (rgb_weight * rgb_loss
-                 + depth_weight * depth_loss
-                 + lpips_weight * perceptual_loss
-                 + kl_loss)
+        total = rgb_weight * rgb_loss + depth_weight * depth_loss + kl_loss
 
         return {
             "total_loss":      total,
             "rgb_loss":        rgb_loss.detach(),
             "depth_loss":      depth_loss.detach(),
             "kl_loss":         kl_loss.detach(),
-            "perceptual_loss": perceptual_loss.detach(),
         }
