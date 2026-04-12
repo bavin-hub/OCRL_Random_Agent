@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from models.world_model import RandomWorldStepGru
 from models.vision_world_model import VisionRssmWorldModel
+from models.vision_world_model_2 import VisionWM
 from datetime import datetime
 try:
     import matplotlib.pyplot as plt
@@ -42,6 +43,25 @@ def CreateWorlModelInstance(config, model_type: str = "wm_gru"):
             num_categories=vp["num_categories"],
             num_classes=vp["num_classes"],
             hidden_dim=vp["hidden_dim"],
+            lr=vt["learning_rate"],
+            weight_decay=vt["weight_decay"],
+            device=config["device"],
+            prop_dim=vp.get("prop_dim", 0),
+            prop_embed_dim=vp.get("prop_embed_dim", 64),
+        )
+        return world_model
+
+    if model_type == "wm_vision":
+        vp = config["vision_world_model_arch_params"]
+        vt = config["vision_world_model_training_params"]
+        world_model = VisionWM(
+            action_dim=config["robot_params"]["action_dims"],
+            image_height=vp["image_height"],
+            image_width=vp["image_width"],
+            cnn_embed_dim=vp["cnn_embed_dim"],
+            action_embed_dim=vp["action_embed_dim"],
+            hidden_dim=vp["hidden_dim"],
+            latent_dim=vp.get("latent_dim", vp["hidden_dim"]),
             lr=vt["learning_rate"],
             weight_decay=vt["weight_decay"],
             device=config["device"],

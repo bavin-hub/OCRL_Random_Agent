@@ -89,7 +89,6 @@ def combine_trajectories(transitions_path: str):
 
 
 def run(args):
-
     try:
         with open('./config.json', 'r') as file:
             config = json.load(file)
@@ -199,8 +198,13 @@ def run(args):
     config["wandb_run_name"] = (args.wandb_run_name or "").strip()
     config["wandb_entity"]   = (args.wandb_entity or "").strip()
 
-    # Combined DB only needed for state-based world model.
-    if args.model_type != "wm_vision_rssm":
+    # Combined DB only needed for state-based world model (wm_gru), not vision.
+    if args.model_type not in ("wm_vision_rssm", "wm_vision"):
+        if not (args.db_dir_name or "").strip():
+            raise ValueError(
+                "State-based training requires --db_dir_name (subfolder under data/ with rollout .db). "
+                "For vision use --model_type wm_vision and --train_dirs ..."
+            )
         combine_trajectories(args.db_dir_name)
         print("Created combined transitions db")
 

@@ -12,24 +12,27 @@ See [setup.md](setup.md) for environment setup.
 
 ## Architecture
 
-Two world model variants:
+### Vision World Model (`wm_vision`)
 
-- **`wm_gru`** — state-based. Predicts next proprioceptive state from current state + action.
-- **`wm_vision_rssm`** — vision-based. Predicts next RGB-D frame from current frame + action + proprioception.
-
-### Vision World Model (`wm_vision_rssm`)
-
-RSSM with a 6-stage ResNet encoder/decoder for 256x256 RGB-D, GRU dynamics, and discrete categorical latents.
+Deterministic GRU-based world model with separate CNN encoder/decoder branches for RGB and depth.
 
 ```
-RGB-D(t) + Action(t) + Prop(t) → Encoder → Prior/Posterior → GRU → Decoder → RGB-D(t+1)
+RGB(t) + Depth(t) + Action(t) + Prop(t)
+  → CNN Encoders → Fused Embedding → GRU → Latent Head
+  → RGB Decoder → RGB(t+1)
+  → Depth Decoder → Depth(t+1)
 ```
 
 Key components:
-- **Encoder**: 6-stage ResNet (256→4 spatial, with GroupNorm + residual blocks)
-- **Latent**: 32x32 discrete categorical with straight-through gradients
-- **Decoder**: U-Net with skip connections from 5 encoder stages
-- **Loss**: Symlog MSE (rgb + depth) + LPIPS perceptual + KL with free-bits and balancing
+- **Encoders**: Separate multi-stage ResNet CNNs for RGB (3-ch) and depth (1-ch), each producing a `cnn_embed_dim` vector
+- **Dynamics**: Single-layer GRU over fused (RGB + depth + action + proprio) embeddings
+- **Latent**: Deterministic MLP bottleneck (no categorical / VQ / KL)
+- **Decoders**: Separate CNN decoders for RGB and depth, each receiving half the latent vector
+- **Loss**: Symlog MSE on RGB + depth (no KL, no perceptual loss)
+
+### Data normalization
+- **RGB**: raw `[0, 255]` images are auto-scaled to `[0, 1]` by the data loader
+- **Depth**: raw meters divided by `depth_scale` (default 50.0) in the training loop
 
 ---
 
@@ -68,11 +71,9 @@ Rollouts are saved under `data/pretraining_rollouts/`.
 
 ## Train
 
-### Vision world model
-
 ```bash
 python main.py \
-  --model_type wm_vision_rssm \
+  --model_type wm_vision \
   --run_mode train \
   --train_dirs \
     data/pretraining_rollouts/25000_transitions/2026-04-08_13-45-36 \
@@ -80,13 +81,15 @@ python main.py \
   --split 0.8
 ```
 
-`--split 0.8` automatically shuffles all `.db` files and splits 80% train / 20% test. The split is deterministic (seed=42).
+### Train/test split
 
-You can also provide explicit train/test dirs:
+- **`--split 0.8`** automatically shuffles all `.db` files and splits 80% train / 20% test (deterministic, seed=42).
+- **`--split_seed N`** changes the shuffle seed.
+- **`--test_dirs`** overrides `--split` with explicit test directories:
 
 ```bash
 python main.py \
-  --model_type wm_vision_rssm \
+  --model_type wm_vision \
   --run_mode train \
   --train_dirs data/pretraining_rollouts/run1 data/pretraining_rollouts/run2 \
   --test_dirs  data/pretraining_rollouts/run3
@@ -94,29 +97,28 @@ python main.py \
 
 ### With W&B logging
 
-Add `--wandb_project` to log training/test metrics to Weights & Biases:
-
+Each continued line must end with `\` (including the line before `--wandb_project`), or the shell will stop the command early.
 ```bash
 python main.py \
-  --model_type wm_vision_rssm \
+  --model_type wm_vision \
   --run_mode train \
-  --train_dirs data/pretraining_rollouts/25000_transitions/2026-04-08_13-45-36 \
+  --train_dirs \
+    data/pretraining_rollouts/25000_transitions/2026-04-08_13-45-36 \
+    data/pretraining_rollouts/25000_transitions/2026-04-08_15-38-39 \
   --split 0.8 \
-  --wandb_project my-world-model \
-  --wandb_run_name run1
+  --wandb_project random_agent \
+  --wandb_run_name run2
 ```
 
-Optional flags: `--wandb_entity <team>`, `--wandb_run_name <name>`.
-
-If `--wandb_project` is empty (default), no logging happens and wandb is not required.
-
-### State-based world model
+### Resume from checkpoint
 
 ```bash
 python main.py \
-  --model_type wm_gru \
+  --model_type wm_vision \
   --run_mode train \
-  --db_dir_name pretraining_rollouts/1000000_transitions
+  --train_dirs data/pretraining_rollouts/run1 \
+  --load_ckpts_dir <ckpt_dir> \
+  --ckpt_name <ckpt_file.pth>
 ```
 
 ---
@@ -125,7 +127,7 @@ python main.py \
 
 ```bash
 python main.py \
-  --model_type wm_vision_rssm \
+  --model_type wm_vision \
   --run_mode eval \
   --train_dirs data/pretraining_rollouts/25000_transitions/2026-04-08_13-45-36 \
   --model_dir_name <model_dir> \
@@ -140,20 +142,27 @@ Training hyperparameters live in `config.json`. Key vision model settings:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `batch_size` | 16 | Micro-batch size per GPU forward pass |
+| `image_height` / `image_width` | 128 | Input resolution (resized from collected frames) |
+| `batch_size` | 16 | Micro-batch size per forward pass |
 | `grad_accum_steps` | 4 | Accumulate gradients over N batches (effective batch = 64) |
-| `seq_len` | 40 | GRU unroll length (history depth for training) |
-| `epochs` | 300 | Training epochs |
-| `lpips_weight` | 0.5 | Perceptual loss weight (VGG-based) |
+| `seq_len` | 40 | GRU unroll length per training sample |
+| `epochs` | 70 | Training epochs |
+| `learning_rate` | 1e-4 | Peak learning rate (after warmup) |
 | `depth_scale` | 50.0 | Depth normalization divisor |
+| `rgb_loss_weight` | 1.0 | RGB loss multiplier |
+| `depth_loss_weight` | 1.0 | Depth loss multiplier |
+| `grad_clip_norm` | 10.0 | Max gradient norm for clipping |
+| `augment` | true | Random horizontal flip + brightness/contrast jitter |
 
-W&B args (CLI only, not in config.json):
+CLI-only flags (not in config.json):
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--wandb_project` | `""` | W&B project name. Empty = disabled |
 | `--wandb_run_name` | `""` | Run name (shows in W&B UI) |
 | `--wandb_entity` | `""` | W&B team/entity |
+| `--split` | `1.0` | Train fraction for auto train/test split |
+| `--split_seed` | `42` | Random seed for the split |
 
 ---
 
@@ -163,18 +172,20 @@ W&B args (CLI only, not in config.json):
 ├── config.json                  # all hyperparameters
 ├── main.py                      # entry point (train / eval)
 ├── models/
-│   ├── world_model.py           # state-based GRU world model
-│   └── vision_world_model.py    # vision RSSM world model
+│   ├── vision_world_model_2.py  # vision world model (deterministic GRU)
+│   └── world_model.py           # state-based GRU world model
 ├── runners/
-│   ├── train.py                 # training loops
+│   ├── train.py                 # training loop
 │   ├── eval.py                  # evaluation
 │   └── agent.py                 # dispatcher
 ├── data/
 │   ├── preprocessor.py          # dataset loaders
 │   ├── pretraining_rollouts/    # collected rollout data
 │   └── baseline_policies/       # RL policies for data collection
+├── tools/
+│   └── vision_wm_openloop.py    # open-loop rollout visualization
 ├── utils.py                     # save/load/plotting helpers
-└── logs/                        # saved models, checkpoints, plots
+└── logs/                        # saved models, checkpoints
 ```
 
 ---

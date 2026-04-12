@@ -66,7 +66,7 @@ class Trainer:
 
 
     def update(self, model_type, load_dataset):
-        if model_type == "wm_vision_rssm":
+        if model_type == "wm_vision":
             self.update_vision(model_type)
             return
         
@@ -124,6 +124,8 @@ class Trainer:
                 seq_len = x.shape[1]
                 batch_loss = 0
                 alpha = 1.0
+
+
                 # Iterate over RNN timestamps
                 for t in range(seq_len-1):
                     loss_t = 0
@@ -225,8 +227,6 @@ class Trainer:
         depth_scale   = vt.get("depth_scale", 50.0)
         rgb_weight    = vt.get("rgb_loss_weight", 1.0)
         depth_weight  = vt.get("depth_loss_weight", 1.0)
-        free_bits     = vt.get("free_bits", 1.0)
-        kl_balance    = vt.get("kl_balance", 0.8)
         augment       = vt.get("augment", True)
         accum_steps   = max(1, vt.get("grad_accum_steps", 1))
 
@@ -247,7 +247,7 @@ class Trainer:
               f"effective batch = {vt['batch_size'] * accum_steps}")
 
         for epoch in range(1, epochs + 1):
-            epoch_loss = epoch_rgb = epoch_depth = epoch_kl = 0.0
+            epoch_loss = epoch_rgb = epoch_depth = 0.0
             micro_count = 0
             print(f"start of epoch {epoch}")
 
@@ -268,55 +268,24 @@ class Trainer:
                         rgb_t, depth_t, rgb_t1, depth_t1
                     )
 
-                seq_len = rgb_t.shape[1]
-                tbptt_chunk = vt.get("tbptt_chunk", seq_len)
-                hidden_state = None
-                batch_rgb = batch_depth = batch_kl = 0.0
+                outputs = world_model(
+                    rgb_t=rgb_t, depth_t=depth_t,
+                    action_t=action_t, prop_t=prop_t,
+                )
+                losses = world_model.compute_loss(
+                    outputs=outputs, rgb_t1=rgb_t1, depth_t1=depth_t1,
+                    rgb_weight=rgb_weight, depth_weight=depth_weight,
+                )
+                micro_loss = losses["total_loss"] / accum_steps
+                micro_loss.backward()
 
-                for t in range(seq_len):
-                    outputs = world_model(
-                        rgb_t=rgb_t[:, t],
-                        depth_t=depth_t[:, t],
-                        action_t=action_t[:, t],
-                        rgb_t1=rgb_t1[:, t],
-                        depth_t1=depth_t1[:, t],
-                        hidden_state=hidden_state,
-                        prop_t=prop_t[:, t],
-                    )
-                    losses = world_model.compute_loss(
-                        outputs=outputs,
-                        rgb_t1=rgb_t1[:, t],
-                        depth_t1=depth_t1[:, t],
-                        free_bits=free_bits,
-                        kl_balance=kl_balance,
-                        rgb_weight=rgb_weight,
-                        depth_weight=depth_weight,
-                    )
-                    hidden_state = outputs["hidden_next"]
-
-                    if t == 0:
-                        chunk_loss = losses["total_loss"]
-                    else:
-                        chunk_loss = chunk_loss + losses["total_loss"]
-
-                    batch_rgb   += float(losses["rgb_loss"])
-                    batch_depth += float(losses["depth_loss"])
-                    batch_kl    += float(losses["kl_loss"])
-
-                    # TBPTT: backprop every tbptt_chunk steps or at sequence end
-                    if (t + 1) % tbptt_chunk == 0 or t == seq_len - 1:
-                        steps_in_chunk = (t % tbptt_chunk) + 1
-                        micro_loss = chunk_loss / (steps_in_chunk * accum_steps)
-                        micro_loss.backward()
-                        hidden_state = hidden_state.detach()
-                        chunk_loss = 0.0
+                batch_rgb   = float(losses["rgb_loss"])
+                batch_depth = float(losses["depth_loss"])
 
                 micro_count += 1
-
-                epoch_loss  += (batch_rgb + batch_depth + batch_kl) / seq_len
-                epoch_rgb   += batch_rgb   / seq_len
-                epoch_depth += batch_depth / seq_len
-                epoch_kl    += batch_kl    / seq_len
+                epoch_loss  += batch_rgb + batch_depth
+                epoch_rgb   += batch_rgb
+                epoch_depth += batch_depth
 
                 if (batch_idx + 1) % 10 == 0 or batch_idx == 0:
                     elapsed = time.time() - t_epoch_start
@@ -351,7 +320,6 @@ class Trainer:
                 "train/total": epoch_loss / n,
                 "train/rgb": epoch_rgb / n,
                 "train/depth": epoch_depth / n,
-                "train/kl": epoch_kl / n,
                 "lr": scheduler.get_last_lr()[0],
                 "epoch": epoch,
             }
@@ -359,8 +327,7 @@ class Trainer:
                 f"epoch {epoch} train | "
                 f"total={train_metrics['train/total']:.6f} "
                 f"rgb={train_metrics['train/rgb']:.6f} "
-                f"depth={train_metrics['train/depth']:.6f} "
-                f"kl={train_metrics['train/kl']:.6f}"
+                f"depth={train_metrics['train/depth']:.6f}"
             )
             if wb:
                 wb.log(train_metrics, step=epoch)
@@ -368,7 +335,7 @@ class Trainer:
             # Per-epoch test evaluation.
             if self.test_loader is not None:
                 world_model.eval()
-                t_loss = t_rgb = t_depth = t_kl = 0.0
+                t_loss = t_rgb = t_depth = 0.0
                 max_eval = vt.get("max_eval_batches", len(self.test_loader))
                 with torch.no_grad():
                     for eval_idx, batch in enumerate(self.test_loader):
@@ -380,44 +347,30 @@ class Trainer:
                         prop_t   = batch["prop_t"].to(device).float()
                         rgb_t1   = batch["rgb_t1"].to(device).float()
                         depth_t1 = batch["depth_t1"].to(device).float() / depth_scale
-                        seq_len  = rgb_t.shape[1]
-                        hidden_state = None
-                        sl = sl_rgb = sl_depth = sl_kl = 0.0
-                        for t in range(seq_len):
-                            outputs = world_model(
-                                rgb_t=rgb_t[:, t], depth_t=depth_t[:, t],
-                                action_t=action_t[:, t],
-                                rgb_t1=rgb_t1[:, t], depth_t1=depth_t1[:, t],
-                                hidden_state=hidden_state, prop_t=prop_t[:, t],
-                            )
-                            losses = world_model.compute_loss(
-                                outputs=outputs, rgb_t1=rgb_t1[:, t],
-                                depth_t1=depth_t1[:, t], free_bits=free_bits,
-                                kl_balance=kl_balance, rgb_weight=rgb_weight,
-                                depth_weight=depth_weight,
-                            )
-                            hidden_state = outputs["hidden_next"]
-                            sl       += float(losses["total_loss"])
-                            sl_rgb   += float(losses["rgb_loss"])
-                            sl_depth += float(losses["depth_loss"])
-                            sl_kl    += float(losses["kl_loss"])
-                        t_loss  += sl / seq_len
-                        t_rgb   += sl_rgb / seq_len
-                        t_depth += sl_depth / seq_len
-                        t_kl    += sl_kl / seq_len
+
+                        outputs = world_model(
+                            rgb_t=rgb_t, depth_t=depth_t,
+                            action_t=action_t, prop_t=prop_t,
+                        )
+                        losses = world_model.compute_loss(
+                            outputs=outputs, rgb_t1=rgb_t1, depth_t1=depth_t1,
+                            rgb_weight=rgb_weight, depth_weight=depth_weight,
+                        )
+                        t_loss  += float(losses["total_loss"])
+                        t_rgb   += float(losses["rgb_loss"])
+                        t_depth += float(losses["depth_loss"])
+
                 nt = min(max_eval, len(self.test_loader))
                 test_metrics = {
                     "test/total": t_loss / nt,
                     "test/rgb": t_rgb / nt,
                     "test/depth": t_depth / nt,
-                    "test/kl": t_kl / nt,
                 }
                 print(
                     f"epoch {epoch} test  | "
                     f"total={test_metrics['test/total']:.6f} "
                     f"rgb={test_metrics['test/rgb']:.6f} "
-                    f"depth={test_metrics['test/depth']:.6f} "
-                    f"kl={test_metrics['test/kl']:.6f}"
+                    f"depth={test_metrics['test/depth']:.6f}"
                 )
                 if wb:
                     wb.log(test_metrics, step=epoch)
