@@ -97,7 +97,6 @@ python main.py \
 
 ### With W&B logging
 
-Each continued line must end with `\` (including the line before `--wandb_project`), or the shell will stop the command early.
 ```bash
 python main.py \
   --model_type wm_vision \
