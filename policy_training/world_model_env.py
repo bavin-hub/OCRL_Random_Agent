@@ -168,13 +168,14 @@ class WorldModelEnv:
             self.base_cfg = app_cfg
 
         combined_db = db_path + "/combined_transitions.db"
-        self.dataset = load_dataset(db_paths=[combined_db],
-                                    combined_db_path=combined_db,
-                                    batch_size=self.num_envs,
-                                    M=self.M, N=0,
-                                    run_mode="train",
-                                    mean=app_cfg.get("mean_state_action"),
-                                    std=app_cfg.get("std_state_action"))
+        data_loader = load_dataset(db_paths=[combined_db],
+                                   combined_db_path=combined_db,
+                                   batch_size=self.num_envs,
+                                   M=self.M, N=0,
+                                   run_mode="train",
+                                   mean=app_cfg.get("mean_state_action"),
+                                   std=app_cfg.get("std_state_action"))
+        self.dataset = data_loader.dataset
 
         # Current state trackers
         self.obs_norm = torch.zeros((self.num_envs, self.num_obs), device=self.device)
