@@ -136,9 +136,14 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   agent_cfg = asdict(cfg.agent)
   env_cfg = asdict(cfg.env)
 
-  runner_cls = load_runner_cls(task_id)
-  if runner_cls is None:
+  if cfg.use_world_model:
+    # Use base runner — VelocityOnPolicyRunner.save() exports ONNX which
+    # needs deep ManagerBasedRlEnv internals the world model env doesn't have.
     runner_cls = MjlabOnPolicyRunner
+  else:
+    runner_cls = load_runner_cls(task_id)
+    if runner_cls is None:
+      runner_cls = MjlabOnPolicyRunner
 
   runner_kwargs = {}
   runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)

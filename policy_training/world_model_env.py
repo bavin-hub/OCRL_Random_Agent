@@ -154,6 +154,7 @@ class WorldModelEnv:
         self._action_space = batch_space(self._single_action_space, self.num_envs)
 
         self.step_counts = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+        self.common_step_counter = 0
 
         # Load dataset for resets
         db_path = f"data/{db_dir_name}"
