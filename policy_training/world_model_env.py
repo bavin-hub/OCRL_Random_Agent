@@ -140,13 +140,18 @@ class WorldModelEnv:
         self.world_model = world_model
         world_model.eval()
         self.device = device
+        self.render_mode = None
 
         self.num_envs = cfg.scene.num_envs
         self.max_episode_length = int(cfg.episode_length_s / cfg.sim.mujoco.timestep / cfg.decimation)
-        self.step_dt = cfg.sim.mujoco.timestep * cfg.decimation
+        self._step_dt = cfg.sim.mujoco.timestep * cfg.decimation
 
         self.num_actions = 29
         self.num_obs = 3 + 3 + 3 + 29 + 29 + 29  # 96
+
+        from mjlab.utils.spaces import Box, batch_space
+        self._single_action_space = Box(shape=(self.num_actions,), low=-1.0, high=1.0)
+        self._action_space = batch_space(self._single_action_space, self.num_envs)
 
         self.step_counts = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -197,6 +202,65 @@ class WorldModelEnv:
     def unwrapped(self):
         return self
 
+    @property
+    def step_dt(self):
+        return self._step_dt
+
+    # --- Attributes required by RslRlVecEnvWrapper ---
+
+    @property
+    def action_manager(self):
+        """Quacks like ManagerBasedRlEnv.action_manager for the wrapper."""
+        return self
+
+    @property
+    def total_action_dim(self):
+        return self.num_actions
+
+    @property
+    def observation_manager(self):
+        """Quacks like ManagerBasedRlEnv.observation_manager for the wrapper."""
+        return self
+
+    def compute(self):
+        """Called by wrapper.get_observations() as observation_manager.compute()."""
+        return self.get_observations()
+
+    @property
+    def observation_space(self):
+        from mjlab.utils.spaces import Box, batch_space
+        single = Box(shape=(self.num_obs,), low=-float('inf'), high=float('inf'))
+        return batch_space(single, self.num_envs)
+
+    @property
+    def action_space(self):
+        return self._action_space
+
+    @action_space.setter
+    def action_space(self, value):
+        self._action_space = value
+
+    @property
+    def single_action_space(self):
+        return self._single_action_space
+
+    @single_action_space.setter
+    def single_action_space(self, value):
+        self._single_action_space = value
+
+    @property
+    def episode_length_buf(self):
+        return self.step_counts
+
+    @episode_length_buf.setter
+    def episode_length_buf(self, value):
+        self.step_counts = value
+
+    def seed(self, seed=-1):
+        if seed >= 0:
+            torch.manual_seed(seed)
+        return seed
+
     def _sample_commands(self, num_envs=None):
         n = self.num_envs if num_envs is None else num_envs
         cmds = torch.zeros((n, 3), device=self.device)
@@ -239,7 +303,7 @@ class WorldModelEnv:
     def _reset_envs(self, env_ids):
         num_resets = len(env_ids)
         if num_resets == 0:
-            return self.get_observations()
+            return self.get_observations(), {}
 
         import random
         indices = random.sample(range(len(self.dataset.all_windows)), num_resets)
@@ -273,7 +337,7 @@ class WorldModelEnv:
         self.prev_actions[env_ids] = 0.0
         self.prev_joint_vel[env_ids] = 0.0
 
-        return self.get_observations()
+        return self.get_observations(), {}
 
     def _compute_rewards(self):
         phys_lin_vel, phys_ang_vel, phys_grav, phys_jpos, phys_jvel = self._unnormalize(self.obs_norm)
@@ -298,7 +362,7 @@ class WorldModelEnv:
         rew_action_rate = torch.sum(torch.square(self.actions - self.prev_actions), dim=1) * -0.05
 
         # 6. joint_acc_l2 (w=-2.5e-7)
-        joint_acc = (phys_jvel - self.prev_joint_vel) / self.step_dt
+        joint_acc = (phys_jvel - self.prev_joint_vel) / self._step_dt
         rew_joint_acc = torch.sum(torch.square(joint_acc), dim=1) * -2.5e-7
 
         # 7. joint_pos_limits (w=-10.0)
@@ -350,14 +414,14 @@ class WorldModelEnv:
         self.step_counts += 1
 
         rewards = self._compute_rewards()
-        dones, timeouts = self._compute_dones()
+        terminated, timeouts = self._compute_dones()
 
-        if dones.any():
-            env_ids = dones.nonzero(as_tuple=False).flatten()
+        if terminated.any():
+            env_ids = terminated.nonzero(as_tuple=False).flatten()
             self._reset_envs(env_ids)
 
-        extras = {"time_outs": timeouts}
-        return self.get_observations(), rewards, dones, extras
+        extras = {}
+        return self.get_observations(), rewards, terminated, timeouts, extras
 
     def close(self):
         pass
