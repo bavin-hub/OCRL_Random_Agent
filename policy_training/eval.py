@@ -5,6 +5,11 @@ Usage:
   python policy_training/eval.py Unitree-G1-Flat-MJ \
       --checkpoint logs/rsl_rl/g1_velocity/2026-04-13_00-53-31/model_10000.pt
 
+  # Evaluate on MuJoCo with video recording
+  python policy_training/eval.py Unitree-G1-Flat-MJ \
+      --checkpoint logs/rsl_rl/g1_velocity/2026-04-13_00-53-31/model_10000.pt \
+      --video --video-length 300
+
   # Evaluate on World Model
   python policy_training/eval.py Unitree-G1-Flat-MJ \
       --checkpoint logs/rsl_rl/g1_velocity/2026-04-13_00-53-31/model_10000.pt \
@@ -26,6 +31,7 @@ from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl import MjlabOnPolicyRunner, RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.utils.torch import configure_torch_backends
+from mjlab.utils.wrappers import VideoRecorder
 
 
 @dataclass(frozen=True)
@@ -37,6 +43,8 @@ class EvalConfig:
   use_world_model: bool = False
   world_model_db_dir: str = "pretraining_rollouts/1000000_transitions"
   world_model_checkpoint: str = ""
+  video: bool = False
+  video_length: int = 200
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
 
   @staticmethod
@@ -65,6 +73,8 @@ def run_eval(task_id: str, cfg: EvalConfig):
   print(f"[INFO] Episodes: {cfg.num_episodes}")
 
   # Create environment.
+  render_mode = "rgb_array" if (cfg.video and not cfg.use_world_model) else None
+
   if cfg.use_world_model:
     import json
     from utils import CreateWorlModelInstance
@@ -80,9 +90,22 @@ def run_eval(task_id: str, cfg: EvalConfig):
     from policy_training.world_model_env import WorldModelEnv
     env = WorldModelEnv(cfg=cfg.env, world_model=world_model, db_dir_name=cfg.world_model_db_dir, device=device)
     print("[INFO] Using World Model environment")
+    if cfg.video:
+      print("[WARN] Video recording not available with World Model (no renderer)")
   else:
-    env = ManagerBasedRlEnv(cfg=cfg.env, device=device)
+    env = ManagerBasedRlEnv(cfg=cfg.env, device=device, render_mode=render_mode)
     print("[INFO] Using MuJoCo environment")
+
+  if cfg.video and not cfg.use_world_model:
+    video_dir = checkpoint_path.parent / "videos" / "eval"
+    print(f"[INFO] Recording videos to {video_dir}")
+    env = VideoRecorder(
+      env,
+      video_folder=video_dir,
+      step_trigger=lambda step: step == 0,
+      video_length=cfg.video_length,
+      disable_logger=True,
+    )
 
   env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
 
@@ -100,11 +123,8 @@ def run_eval(task_id: str, cfg: EvalConfig):
   # Run episodes.
   all_rewards = []
   all_lengths = []
-  all_tracking_errors = []
 
-  obs = env.reset()
-  if isinstance(obs, dict):
-    obs = obs["actor"] if "actor" in obs else obs["policy"]
+  env.reset()
 
   episode_rewards = torch.zeros(env.unwrapped.num_envs, device=device)
   episode_lengths = torch.zeros(env.unwrapped.num_envs, device=device, dtype=torch.long)
@@ -112,13 +132,10 @@ def run_eval(task_id: str, cfg: EvalConfig):
 
   while completed < cfg.num_episodes:
     with torch.no_grad():
+      obs = env.get_observations()
       actions = policy(obs)
 
-    obs_dict, rewards, dones, extras = env.step(actions)
-    if isinstance(obs_dict, dict):
-      obs = obs_dict["actor"] if "actor" in obs_dict else obs_dict["policy"]
-    else:
-      obs = obs_dict
+    _, rewards, dones, extras = env.step(actions)
 
     episode_rewards += rewards
     episode_lengths += 1
