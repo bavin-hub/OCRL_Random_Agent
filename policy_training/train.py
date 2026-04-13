@@ -214,7 +214,8 @@ def main():
   # Parse first argument to choose the task.
   # Import tasks to populate the registry.
   import mjlab.tasks  # noqa: F401
-  import src.tasks
+  import src.tasks  # noqa: F401
+  import policy_training.local_env  # noqa: F401 — registers Local-Go2-Rough/Flat
 
   all_tasks = list_tasks()
   chosen_task, remaining_args = tyro.cli(
