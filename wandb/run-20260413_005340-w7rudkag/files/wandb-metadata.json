@@ -1,0 +1,43 @@
+{
+  "os": "Linux-6.17.0-1009-aws-x86_64-with-glibc2.39",
+  "python": "CPython 3.11.15",
+  "startedAt": "2026-04-13T00:53:40.006176Z",
+  "args": [
+    "Unitree-G1-Flat-MJ",
+    "--env.scene.num-envs",
+    "4096"
+  ],
+  "program": "-m policy_training.train",
+  "git": {
+    "remote": "https://github.com/bavin-hub/OCRL_Random_Agent.git",
+    "commit": "710ea969f051463ea7b0e6bc0b5d3e6bd803c049"
+  },
+  "email": "vkalva@andrew.cmu.edu",
+  "root": "/home/ubuntu/OCRL_Random_Agent",
+  "host": "ip-172-31-75-216",
+  "executable": "/home/ubuntu/miniconda3/envs/random_agent/bin/python",
+  "cpu_count": 2,
+  "cpu_count_logical": 4,
+  "gpu": "Tesla T4",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "82086711296",
+      "used": "27530051584"
+    }
+  },
+  "memory": {
+    "total": "16552312832"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "Tesla T4",
+      "memoryTotal": "16106127360",
+      "cudaCores": 2560,
+      "architecture": "Turing",
+      "uuid": "GPU-952ce9ea-3f1e-4855-cce3-4fecfe6c75cf"
+    }
+  ],
+  "cudaVersion": "13.0",
+  "writerId": "qhm1ovc3dnfyt8mfaano1b3es01076r0"
+}

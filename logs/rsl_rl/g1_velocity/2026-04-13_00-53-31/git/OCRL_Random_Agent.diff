@@ -1,0 +1,25 @@
+--- git commit ---
+710ea969f051463ea7b0e6bc0b5d3e6bd803c049
+
+
+--- git status ---
+On branch vyvas
+Your branch is up to date with 'origin/vyvas'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+  (commit or discard the untracked or modified content in submodules)
+	modified:   data/baseline_policies/unitree_rl_mjlab (untracked content)
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	logs/
+	policy_training/__pycache__/
+	policy_training/local_env/__pycache__/
+	wandb/
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
