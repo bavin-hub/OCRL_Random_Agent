@@ -162,7 +162,9 @@ class WorldModelEnv:
             self.M = app_cfg['world_model_training_params']['M']
             self.base_cfg = app_cfg
 
-        self.dataset = load_dataset(db_paths=[db_path + "/combined_transitions.db"],
+        combined_db = db_path + "/combined_transitions.db"
+        self.dataset = load_dataset(db_paths=[combined_db],
+                                    combined_db_path=combined_db,
                                     batch_size=self.num_envs,
                                     M=self.M, N=0,
                                     run_mode="train")
