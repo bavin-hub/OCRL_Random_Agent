@@ -322,7 +322,7 @@ class WorldModelEnv:
 
             x_prev = chunk_tensors[:, self.M-1, :96].unsqueeze(1)
             x_step = chunk_tensors[:, self.M-1, :].unsqueeze(1)
-            st_next_pred, ht, _, _ = self.world_model.forward(x_step, ht, predict=True, x_prev=x_prev)
+            st_next_pred, ht = self.world_model.forward(x_step, ht, predict=True, x_prev=x_prev)
 
         self.obs_norm[env_ids] = st_next_pred.squeeze(1).float()
 
@@ -409,7 +409,7 @@ class WorldModelEnv:
         x = torch.cat([self.obs_norm, self.actions], dim=-1).unsqueeze(1)
 
         with torch.no_grad():
-            st_next_pred, self.ht, _, _ = self.world_model.forward(x, self.ht, predict=True, x_prev=self.obs_norm.unsqueeze(1))
+            st_next_pred, self.ht = self.world_model.forward(x, self.ht, predict=True, x_prev=self.obs_norm.unsqueeze(1))
 
         self.obs_norm = st_next_pred.squeeze(1).float()
         self.step_counts += 1
