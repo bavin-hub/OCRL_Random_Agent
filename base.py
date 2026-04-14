@@ -169,7 +169,7 @@ class BaseViewer(ABC):
     self._last_error: str | None = None
 
     # Speed.
-    self._speed_index = self.SPEED_MULTIPLIERS.index(8.0)
+    self._speed_index = self.SPEED_MULTIPLIERS.index(4.0)
     self._time_multiplier = self.SPEED_MULTIPLIERS[self._speed_index]
 
     # Physics accumulator and render timer.
@@ -192,7 +192,7 @@ class BaseViewer(ABC):
     self.local_buffer = []
     self.incremental_step = 0
     self.trajectory = []
-    self.buffer_size_d = 1000
+    self.buffer_size_d = 100
     self.transitions_per_trajectory = 1000
     self.idx = 0
     self._replay_initial_state_set = False
@@ -492,11 +492,11 @@ class BaseViewer(ABC):
 
     # Append to buffer
     self.local_buffer.append((
-        st_n.tolist(),
-        contact_vec.tolist(),  # use the newly computed contact vector
-        target_n.tolist(),
+        st.tolist(),
+        ct.tolist(),
+        target_actions.tolist(),
         policy_at.cpu().numpy().squeeze().tolist(),
-        policy_vec_n.tolist()
+        command.tolist()
     ))
 
     # return state_vec, contact_vec, target_actions
@@ -726,7 +726,7 @@ class BaseViewer(ABC):
     self._rollout_output_dir = None
     if db_dir is not None:
       n_transitions = self.buffer_size_d * self.transitions_per_trajectory
-      folder_name = f"{n_transitions}_transitions"
+      folder_name = f"{n_transitions}_transitions_run1subject2_bad"
       self._rollout_output_dir = os.path.join(db_dir, folder_name)
       os.makedirs(self._rollout_output_dir, exist_ok=True)
       print(f"Per-trajectory rollouts directory: {self._rollout_output_dir}")
