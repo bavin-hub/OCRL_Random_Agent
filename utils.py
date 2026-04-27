@@ -203,6 +203,13 @@ def z_norm(state_action_pair, mean, std):
     return state_action_pair.astype(np.float32)
 
 
+def z_norm(state, action, state_mean, state_std, action_mean, action_std):
+    # print(type(state_action_pair))
+    state_norm = (state - state_mean) / (state_std + 1e-8)
+    action_norm = (action - action_mean) / (action_std + 1e-8)
+    return state_norm, action_norm
+
+
 
 
 

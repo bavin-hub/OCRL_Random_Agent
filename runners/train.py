@@ -4,6 +4,8 @@ import torch
 from utils import SaveModel, CreateWorlModelInstance, get_model_name,\
                   count_parameters, SaveCkpt, LoadCkpt
 import time
+from storage.replay_buffer import ReplayBuffer
+from utils import z_norm
 
 # only state-action pair
 class Trainer:
@@ -12,6 +14,19 @@ class Trainer:
         self.config = config
         # self.data_loader = load_dataset(db_path=self.config["db_path"])
 
+        self.scale = torch.tensor([self.config.get("scale")])
+        self.offset = torch.tensor([self.config.get("offset")])
+
+        self.mean_state_action = self.config.get("mean_state_action")
+        self.std_state_action = self.config.get("std_state_action")
+        self.state_mean = torch.tensor(self.mean_state_action[:96])
+        self.state_std = torch.tensor(self.std_state_action[:96])
+        self.action_mean = torch.tensor(self.mean_state_action[96:])
+        self.action_std = torch.tensor(self.std_state_action[96:])
+
+        self.replay_buffer = ReplayBuffer(dim=self.config.get("dim"), 
+                                          buffer_size=self.config.get("buffer_size"), 
+                                          device=self.config["device"]) 
 
     def get_model_params(self, model):
         num_model_params = 0
@@ -19,6 +34,48 @@ class Trainer:
             num_model_params += param.flatten().shape[0]
         
         print('Total params in the world model : ', num_model_params)
+
+    def scale_policy_actions(self, policy_actions):
+        return (policy_actions*self.scale) + self.offset
+
+    def insert_into_replay_buffer(self, state_, torques, action, termination):
+        # obs -> combine state and torques
+        # scale the raw policy actions
+        # normalize the state and action
+        obs = torch.cat((state_[..., :67], torques), dim=-1)
+        action = self.scale_policy_actions(action)
+        # obs_norm, action_norm = self.normalize_state_and_action(obs, action)
+        obs_norm, action_norm = z_norm(obs, action, self.state_mean, self.state_std, self.action_mean, self.action_std)
+        print("before scaled actions")
+        obs_norm.to(self.config["device"])
+        print("\n\n\n")
+        print("actions scaled\n\n\n")
+        self.replay_buffer.insert([obs_norm.to(self.config["device"]), 
+                                   action_norm.to(self.config["device"]), 
+                                   termination.to(self.config["device"])])
+
+
+    def on_the_fly_update(self):
+
+        # create model instance
+        M, N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
+        decay = self.config['world_model_training_params']['forecast_decay']
+        state_dims = self.config['robot_params']['state_dims']
+        action_dims = self.config['robot_params']['action_dims']
+        world_model = CreateWorlModelInstance(self.config)
+        world_model.train()
+        print('World Model instantiated')
+        # self.get_model_params(world_model)
+        count_parameters(world_model)
+        training_loss = []
+
+
+        # get the batch data from the replay buffer and do world model update
+        for batch in self.replay_buffer.mini_batch_generator(sequence_length=self.config['world_model_training_params']['M'], 
+                                                              num_mini_batch=self.config['world_model_training_params']['num_mini_batch'], 
+                                                              mini_batch_size=self.config['world_model_training_params']['mini_batch_size']):
+            print(type(batch))
+            print("\n\n")
 
 
     def update(self, model_type, load_dataset):
