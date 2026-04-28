@@ -1,3 +1,12 @@
+"""
+usage:
+python train_custom_reward.py
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import torch
@@ -245,7 +254,7 @@ def custom_reward(
     oz_f = omega_z.reshape(n, -1).squeeze(-1)
     vz_f = vz.reshape(n, -1).squeeze(-1)
 
-    # Track lin vel: fold xy and z error inside the exp (world_model_env style)
+    # Track lin vel: fold xy and z error inside the exp (world_model_env style (ripoff from mjlab vel tracking))
     d_xy = c_xy - v_xy
     xy_err_sum = (d_xy * d_xy).sum(dim=-1)
     z_err_sum = vz_f * vz_f
@@ -277,13 +286,13 @@ def custom_reward(
     r_omega_xy = w_omega_xy * (omega_xy * omega_xy).sum(dim=-1)
 
     # Joint / actuator torques (non-kinematic; weight zeroed)
-    r_q_tau = w_q_tau  * sq_l2(tau)
+    r_q_tau = w_q_tau  * sq_l2(tau) #disabled
     # r_q_tau = torch.clamp(r_q_tau, min=-1.0)
 
     # Joint acceleration — sum to mirror world_model_env
     r_q_ddot = w_q_ddot * (q_ddot * q_ddot).sum(dim=-1)
 
-    # Action rate — sum to mirror world_model_env
+    # Action rate sum 
     r_a_dot = w_a_dot  * ((actions - last_actions) ** 2).sum(dim=-1)
 
     # Feet air time (mjlab-style: in-range per foot, gated by command magnitude)

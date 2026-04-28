@@ -1,3 +1,6 @@
+"""
+python eval.py --checkpoint saved_models2/model_2999.pt --num-envs 1 --steps 1000 --viewer none 
+"""
 from __future__ import annotations
 
 import argparse
@@ -131,6 +134,82 @@ def _build_env_and_actor(args: argparse.Namespace, device: str, play_cfg: bool):
     return env, actor, policy, num_actions, ckpt_path, render_mode
 
 
+def run_eval(env, policy, device: str, args: argparse.Namespace) -> None:
+    obs = env.get_observations().to(device)
+    obs_td = to_obs_tensordict(obs, device)
+    ep_return = torch.zeros(args.num_envs, device=device)
+    ep_len = torch.zeros(args.num_envs, device=device)
+
+    finished_returns: list[torch.Tensor] = []
+    finished_lengths: list[torch.Tensor] = []
+    step_rewards: list[float] = []
+
+    print_every = 20  # steps between cmd/vel prints
+
+    with torch.inference_mode():
+        for step in range(args.steps):
+            actions = policy(obs_td)
+            next_obs, rewards, dones, _extras = env.step(actions)
+            next_obs = next_obs.to(device)
+            rewards = rewards.to(device).view(-1)
+            dones = dones.to(device).view(-1).float()
+
+            step_rewards.append(rewards.mean().item())
+
+            if step % print_every == 0:
+                cmd = env.unwrapped.command_manager.get_command("twist")
+                actual_vel = env.unwrapped.scene["robot"].data.root_link_lin_vel_b
+                actual_ang = env.unwrapped.scene["robot"].data.root_link_ang_vel_b
+                for i in range(min(args.num_envs, 4)):
+                    print(
+                        f"[step {step:4d} env {i}] "
+                        f"cmd=({cmd[i, 0].item():+.2f},{cmd[i, 1].item():+.2f},{cmd[i, 2].item():+.2f}) "
+                        f"actual_vel=({actual_vel[i, 0].item():+.2f},{actual_vel[i, 1].item():+.2f},{actual_vel[i, 2].item():+.2f}) "
+                        f"actual_omega_z={actual_ang[i, 2].item():+.2f}"
+                    )
+
+            ep_return += rewards
+            ep_len += 1.0
+            done_mask = dones > 0.5
+            if done_mask.any():
+                finished_returns.append(ep_return[done_mask].clone())
+                finished_lengths.append(ep_len[done_mask].clone())
+                for i in done_mask.nonzero(as_tuple=False).view(-1).tolist():
+                    print(
+                        f"[episode] env={i} return={ep_return[i].item():.3f} "
+                        f"len={int(ep_len[i].item())} at_step={step}"
+                    )
+                ep_return = ep_return * (1.0 - dones)
+                ep_len = ep_len * (1.0 - dones)
+
+            obs_td = to_obs_tensordict(next_obs, device)
+
+            if (step + 1) % max(1, args.steps // 10) == 0:
+                print(
+                    f"[progress] step={step + 1}/{args.steps} "
+                    f"mean_reward_step={rewards.mean().item():.4f}"
+                )
+
+    # Final summary across all completed episodes.
+    print("\n" + "=" * 60)
+    print("[EVAL SUMMARY]")
+    if finished_returns:
+        all_returns = torch.cat(finished_returns)
+        all_lengths = torch.cat(finished_lengths)
+        print(f"  episodes completed : {all_returns.numel()}")
+        print(f"  ep_return  mean    : {all_returns.mean().item():.3f}")
+        print(f"  ep_return  min/max : {all_returns.min().item():.3f} / {all_returns.max().item():.3f}")
+        print(f"  ep_return  std     : {all_returns.std().item():.3f}" if all_returns.numel() > 1 else "")
+        print(f"  ep_length  mean    : {all_lengths.mean().item():.1f}")
+        print(f"  ep_length  min/max : {int(all_lengths.min().item())} / {int(all_lengths.max().item())}")
+    else:
+        print("  no episodes completed during eval")
+    if step_rewards:
+        mean_step_reward = sum(step_rewards) / len(step_rewards)
+        print(f"  mean step reward   : {mean_step_reward:.4f} (over {len(step_rewards)} steps)")
+    print("=" * 60)
+
+
 def main() -> None:
     args = parse_args()
     configure_torch_backends()
@@ -165,38 +244,7 @@ def main() -> None:
             else:
                 raise RuntimeError(f"Unsupported viewer: {resolved}")
         else:
-            obs = env.get_observations().to(device)
-            obs_td = to_obs_tensordict(obs, device)
-            ep_return = torch.zeros(args.num_envs, device=device)
-            ep_len = torch.zeros(args.num_envs, device=device)
-
-            with torch.inference_mode():
-                for step in range(args.steps):
-                    actions = policy(obs_td)
-                    next_obs, rewards, dones, _extras = env.step(actions)
-                    next_obs = next_obs.to(device)
-                    rewards = rewards.to(device).view(-1)
-                    dones = dones.to(device).view(-1).float()
-
-                    ep_return += rewards * (1.0 - dones)
-                    ep_len += 1.0
-                    done_mask = dones > 0.5
-                    if done_mask.any():
-                        for i in done_mask.nonzero(as_tuple=False).view(-1).tolist():
-                            print(
-                                f"[episode] env={i} return={ep_return[i].item():.3f} "
-                                f"len={int(ep_len[i].item())} at_step={step}"
-                            )
-                        ep_return = ep_return * (1.0 - dones)
-                        ep_len = ep_len * (1.0 - dones)
-
-                    obs_td = to_obs_tensordict(next_obs, device)
-
-                    if (step + 1) % max(1, args.steps // 10) == 0:
-                        print(
-                            f"[progress] step={step + 1}/{args.steps} "
-                            f"mean_reward_step={rewards.mean().item():.4f}"
-                        )
+            run_eval(env, policy, device, args)
     finally:
         env.close()
         print("[INFO] eval finished.")
