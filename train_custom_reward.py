@@ -19,7 +19,7 @@ from rsl_rl.utils import check_nan
 TASK_ID = "Mjlab-Velocity-Flat-Unitree-G1"
 NUM_ENVS = 4096
 NUM_STEPS = 24
-MAX_ITERATIONS = 1200
+MAX_ITERATIONS = 3000
 SAVE_INTERVAL = 100
 
 
@@ -156,8 +156,6 @@ def save_model(algo: PPO, iteration: int, save_dir: str = "saved_models") -> Pat
     payload["iter"] = iteration
     torch.save(payload, checkpoint_path)
     return checkpoint_path
-
-
 
 def custom_reward(
     cmd_vels: torch.Tensor,
@@ -364,7 +362,7 @@ def custom_reward(
         + r_fa
         + r_foot_c
         + r_c
-        + r_stand_still
+        #+ r_stand_still
         + r_g
         + r_joint_pos_limits
         + r_pose
@@ -440,6 +438,11 @@ def main() -> None:
 
     consts = setup_reward_constants(device)
 
+    ep_return = torch.zeros(NUM_ENVS, device=device)
+    ep_length = torch.zeros(NUM_ENVS, device=device, dtype=torch.long)
+    finished_returns = []
+    finished_lengths = []
+
     print(f"[INFO] task={TASK_ID} device={device} num_envs={NUM_ENVS} obs_dim={obs_dim} actions={num_actions}")
     for it in range(MAX_ITERATIONS):
         with torch.inference_mode():
@@ -479,13 +482,34 @@ def main() -> None:
 
                 last_actions = actions.clone()
 
+                ep_return += rewards
+                ep_length += 1
+                done_mask = dones.bool()
+                if done_mask.any():
+                    finished_returns.append(ep_return[done_mask].clone())
+                    finished_lengths.append(ep_length[done_mask].clone())
+                    ep_return[done_mask] = 0.0
+                    ep_length[done_mask] = 0
+
                 algo.process_env_step(next_obs_td, rewards, dones, extras)
                 obs_td = next_obs_td
 
             algo.compute_returns(obs_td)
 
         loss_dict = algo.update()
-        print(f"Iter {it}: {loss_dict}\n")
+        if finished_returns:
+            all_r = torch.cat(finished_returns)
+            all_l = torch.cat(finished_lengths)
+            ep_stats = (
+                f"ep_return mean={all_r.mean().item():.2f} "
+                f"min={all_r.min().item():.2f} max={all_r.max().item():.2f} "
+                f"ep_length mean={all_l.float().mean().item():.1f} count={all_r.numel()}"
+            )
+            finished_returns.clear()
+            finished_lengths.clear()
+        else:
+            ep_stats = "no episodes finished this iter"
+        print(f"Iter {it}: {ep_stats} | {loss_dict}\n")
         if it % SAVE_INTERVAL == 0:
             ckpt = save_model(algo, it)
             print(f"[INFO] saved checkpoint: {ckpt}")
