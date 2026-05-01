@@ -1,21 +1,24 @@
 {
     "device": "cuda",
-    "dim": 3,
-    "buffer_size": 256,
+    "dim": [96, 29, 1],
+    "buffer_size": 1000,
+    "use_ckpt": false,
     "world_model_training_params": {
-        "epochs": 500,
+        "epochs": 1,
         "batch_size": 1024,
         "N": 8,
         "M": 32,
-        "learning_rate": 0.001,
-        "weight_decay": 1e-5,
+        "learning_rate": 1e-3,
+        "weight_decay": 0.0,
         "forecast_decay": 1.0,
         "step_time_seconds": 0.02,
-        "N_pred": 120
+        "N_pred": 120,
+        "num_mini_batches": 20,
+        "mini_batch_size": 5000
     },
     "world_model_arch_params": {
-        "gru_hidden_dim": 512,
-        "num_gru_layers": 3,
+        "gru_hidden_dim": 256,
+        "num_gru_layers": 2,
         "embed_dim": 256,
         "mlp_head_dim": 128,
         "with_uncertainity": false

@@ -125,10 +125,29 @@ def save_plot_figure(fig, model_dir_name: str, filename: str, dpi: int = 150):
     print(f"Saved plot: {out_path}")
 
 
-def plot_graphs(lin_vel_true, lin_vel_preds, ang_vel_true, 
-                ang_vel_preds, true_joints, pred_joints, 
-                M, model_dir_name, model_name, not_all_joints=True):
-    
+def plot_graphs(
+    lin_vel_true,
+    lin_vel_preds,
+    ang_vel_true,
+    ang_vel_preds,
+    true_joints,
+    pred_joints,
+    M,
+    model_dir_name,
+    model_name,
+    not_all_joints=True,
+    proj_grav_true=None,
+    proj_grav_pred=None,
+    true_joint_vel=None,
+    pred_joint_vel=None,
+    true_joint_tau=None,
+    pred_joint_tau=None,
+):
+    """
+    State vector layout when extended plots are used:
+    [base_lin_vel(3), base_ang_vel(3), proj_gravity(3), joint_pos(n), joint_vel(n), joint_torques(n)].
+    Optional *_grav / *_joint_vel / *_joint_tau args are omitted in callers that only log the legacy fields.
+    """
     lin_vel_x, lin_vel_y, lin_vel_z = lin_vel_true
     lin_vel_x_pred, lin_vel_y_pred, lin_vel_z_pred = lin_vel_preds
 
@@ -151,6 +170,23 @@ def plot_graphs(lin_vel_true, lin_vel_preds, ang_vel_true,
     def mark_history(ax):
         ax.axvline(M, color=c_mark, linestyle="--", linewidth=1.8, label=f"M={M} (history)")
         ax.legend(loc="best", fontsize=8)
+
+    def plot_joint_dict_figure(true_dict, pred_dict, title: str, fname_suffix: str):
+        fig_j, axes_j = plt.subplots(
+            len(JOINT_PICK), 1, figsize=(20, 5 * len(JOINT_PICK)), sharex=True
+        )
+        if len(JOINT_PICK) == 1:
+            axes_j = [axes_j]
+        for ax, j in zip(axes_j, JOINT_PICK):
+            ax.plot(time_steps, true_dict[j], label="true", color=c_true, linewidth=lw)
+            ax.plot(time_steps, pred_dict[j], label="pred", linestyle=":", color=c_pred, linewidth=lw)
+            ax.set_ylabel(f"joint {j}")
+            mark_history(ax)
+        axes_j[-1].set_xlabel("time step (1-based)")
+        fig_j.suptitle(title)
+        fig_j.tight_layout()
+        save_plot_figure(fig_j, model_dir_name, f"{model_name}_{fname_suffix}")
+        plt.show()
 
     fig_lin, axes_lin = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
     lin_true = [lin_vel_x, lin_vel_y, lin_vel_z]
@@ -196,18 +232,153 @@ def plot_graphs(lin_vel_true, lin_vel_preds, ang_vel_true,
     save_plot_figure(fig_j, model_dir_name, f"{model_name}_joints")
     plt.show()
 
+    if proj_grav_true is not None and proj_grav_pred is not None:
+        gx_t, gy_t, gz_t = proj_grav_true
+        gx_p, gy_p, gz_p = proj_grav_pred
+        fig_g, axes_g = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
+        grav_true = [gx_t, gy_t, gz_t]
+        grav_pred = [gx_p, gy_p, gz_p]
+        labels_g = ["proj_gravity_x", "proj_gravity_y", "proj_gravity_z"]
+        for k, ax in enumerate(axes_g):
+            ax.plot(time_steps, grav_true[k], label="true", color=c_true, linewidth=lw)
+            ax.plot(time_steps, grav_pred[k], label="pred", linestyle=":", color=c_pred, linewidth=lw)
+            ax.set_ylabel(labels_g[k])
+            mark_history(ax)
+        axes_g[-1].set_xlabel("time step (1-based)")
+        fig_g.suptitle("Projected gravity (body frame)")
+        fig_g.tight_layout()
+        save_plot_figure(fig_g, model_dir_name, f"{model_name}_proj_gravity")
+        plt.show()
 
-def z_norm(state_action_pair, mean, std):
-    # print(type(state_action_pair))
-    state_action_pair = (state_action_pair - mean) / (std + 1e-8)
-    return state_action_pair.astype(np.float32)
+    if true_joint_vel is not None and pred_joint_vel is not None:
+        plot_joint_dict_figure(
+            true_joint_vel, pred_joint_vel, "Joint velocities (subset)", "joint_vel"
+        )
+
+    if true_joint_tau is not None and pred_joint_tau is not None:
+        plot_joint_dict_figure(
+            true_joint_tau, pred_joint_tau, "Joint torques (subset)", "joint_torques"
+        )
+
+
+# def z_norm(state_action_pair, mean, std):
+#     # print(type(state_action_pair))
+#     state_action_pair = (state_action_pair - mean) / (std + 1e-8)
+#     return state_action_pair.astype(np.float32)
 
 
 def z_norm(state, action, state_mean, state_std, action_mean, action_std):
     # print(type(state_action_pair))
-    state_norm = (state - state_mean) / (state_std + 1e-8)
-    action_norm = (action - action_mean) / (action_std + 1e-8)
+    state_norm = (state - state_mean) / (state_std + 1e-5)
+    action_norm = (action - action_mean) / (action_std + 1e-5)
     return state_norm, action_norm
+
+
+
+def minmax_norm_state_action_pair(
+    state_action_pair,
+    joint_pos_min,
+    joint_pos_max,
+    tau_min,
+    tau_max,
+    *,
+    st_dim: int = 96,
+    base_lin_vel_limit: float = 4.0,
+    base_ang_vel_limit: float = 10.0,
+    gravity_limit: float = 9.81,
+    joint_vel_limit: float = 15.0,
+):
+    """Normalize a concatenated [st | at] vector like `normalize_st_and_target_actions` in base.py.
+
+    Last axis: ``st = [...,:st_dim]``, ``at = [...,st_dim:]`` (joint position targets).
+    ``st`` layout matches base: base_lin_vel(3), base_ang_vel(3), gravity_proj(3),
+    joint_pos(nj), joint_vel(nj), joint_torque(na), with ``st_dim == 9 + 2*nj + na``.
+
+    Default path: ``state_action_pair`` is a ``torch.Tensor`` (e.g. on CUDA); bounds may be
+    tensors or array-likes and are moved to the same device and dtype as ``state_action_pair``.
+    NumPy array input is still supported and returns NumPy outputs on CPU.
+    """
+    return_numpy = isinstance(state_action_pair, np.ndarray)
+    if return_numpy:
+        x = torch.from_numpy(np.asarray(state_action_pair, dtype=np.float64))
+    else:
+        if torch.is_tensor(state_action_pair):
+            x = state_action_pair
+        else:
+            x = torch.as_tensor(state_action_pair)
+        if not torch.is_floating_point(x):
+            x = x.float()
+
+    device = x.device
+    dtype = x.dtype
+
+    if x.shape[-1] <= st_dim:
+        raise ValueError(
+            f"Last dim must be > st_dim ({st_dim}); got {x.shape[-1]}"
+        )
+
+    st = x[..., :st_dim]
+    target_actions = x[..., st_dim:]
+    nj = int(target_actions.shape[-1])
+    na = st_dim - 9 - 2 * nj
+    if na < 0 or st_dim != 9 + 2 * nj + na:
+        raise ValueError(
+            f"Bad layout: st_dim={st_dim}, nj={nj} -> need st_dim==9+2*nj+na"
+        )
+
+    def _bounds_1d(b):
+        if torch.is_tensor(b):
+            t = b.to(device=device, dtype=dtype).reshape(-1)
+        else:
+            t = torch.as_tensor(b, device=device, dtype=dtype).reshape(-1)
+        return t
+
+    jlo = _bounds_1d(joint_pos_min)
+    jhi = _bounds_1d(joint_pos_max)
+    tlo = _bounds_1d(tau_min)
+    thi = _bounds_1d(tau_max)
+    if jlo.shape != (nj,) or jhi.shape != (nj,):
+        raise ValueError("joint_pos_min/max must have shape (nj,) matching action dim")
+    if tlo.shape != (na,) or thi.shape != (na,):
+        raise ValueError("tau_min/max must have shape (na,) matching actuator torques in st")
+
+    def _normalize_to_minus_one_one_t(z, lo_1d, hi_1d):
+        view_shape = (1,) * (z.ndim - 1) + (-1,)
+        lo_b = lo_1d.view(view_shape)
+        hi_b = hi_1d.view(view_shape)
+        span = hi_b - lo_b
+        valid = span > 1e-8
+        out = torch.where(
+            valid, 2.0 * (z - lo_b) / span - 1.0, torch.zeros_like(z, dtype=dtype, device=device)
+        )
+        return torch.clamp(out, -1.0, 1.0)
+
+    def _normalize_symmetric_t(z, bound: float):
+        if bound <= 0:
+            raise ValueError("bound must be positive")
+        return torch.clamp(z / bound, -1.0, 1.0)
+
+    base_lin = st[..., 0:3]
+    base_ang = st[..., 3:6]
+    grav = st[..., 6:9]
+    jq = st[..., 9 : 9 + nj]
+    jv = st[..., 9 + nj : 9 + 2 * nj]
+    tau = st[..., 9 + 2 * nj :]
+
+    n_base_lin = _normalize_symmetric_t(base_lin, base_lin_vel_limit)
+    n_base_ang = _normalize_symmetric_t(base_ang, base_ang_vel_limit)
+    n_grav = _normalize_symmetric_t(grav, gravity_limit)
+    n_jq = _normalize_to_minus_one_one_t(jq, jlo, jhi)
+    n_jv = _normalize_symmetric_t(jv, joint_vel_limit)
+    n_tau = _normalize_to_minus_one_one_t(tau, tlo, thi)
+    st_out = torch.cat(
+        [n_base_lin, n_base_ang, n_grav, n_jq, n_jv, n_tau], dim=-1
+    )
+    tgt_out = _normalize_to_minus_one_one_t(target_actions, jlo, jhi)
+
+    if return_numpy:
+        return st_out.detach().cpu().numpy(), tgt_out.detach().cpu().numpy()
+    return st_out, tgt_out
 
 
 

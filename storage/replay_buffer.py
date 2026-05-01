@@ -30,9 +30,11 @@ class ReplayBuffer:
     def insert(self, input_buf):
         """Add new states to memory in a circular manner."""
         if self.replay_buf is None:
+            print(isinstance(input_buf, list))
             self._initialize_buffer(input_buf[0].shape[0] if isinstance(input_buf, list) else input_buf.shape[0])
 
         def _insert_into_buffer(r_buf, i_buf):
+            i_buf = torch.unsqueeze(i_buf, dim=1)
             num_inputs = i_buf.shape[1]
             end_idx = self.step + num_inputs
             if end_idx > self.buffer_size:

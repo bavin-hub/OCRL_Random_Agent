@@ -22,7 +22,7 @@ import json
 TASK_ID = "Mjlab-Velocity-Flat-Unitree-G1"
 NUM_ENVS = 4096
 NUM_STEPS = 24
-MAX_ITERATIONS = 1000
+MAX_ITERATIONS = 2600
 SAVE_INTERVAL = 100
 
 
@@ -119,7 +119,7 @@ def main() -> None:
     ############## world model inits ##############
     # load config
     try:
-        with open('/home/bavin/ws/OCRL_Random_Agent/config.json', 'r') as file:
+        with open('config.json', 'r') as file:
             config = json.load(file)
             print('config file loaded successfully')
         file.close()
@@ -137,9 +137,9 @@ def main() -> None:
     for it in range(MAX_ITERATIONS):
         with torch.inference_mode():
             for _ in range(NUM_STEPS):
+                tau = env.unwrapped.scene["robot"].data.actuator_force
                 actions = algo.act(obs_td)
                 next_obs, rewards, dones, extras = env.step(actions.to(env.device))
-                tau = env.unwrapped.scene["robot"].data.actuator_force
                 check_nan(next_obs, rewards, dones)
 
                 next_obs = next_obs.to(device)
@@ -160,7 +160,7 @@ def main() -> None:
 
 
         # train our world model from the buffer data
-        # trainer.on_the_fly_wm_update()
+        trainer.on_the_fly_update(it)
 
         # if warmup done:
             # if not init imagination:

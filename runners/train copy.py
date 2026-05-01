@@ -5,7 +5,7 @@ from utils import SaveModel, CreateWorlModelInstance, get_model_name,\
                   count_parameters, SaveCkpt, LoadCkpt
 import time
 from storage.replay_buffer import ReplayBuffer
-from utils import z_norm, minmax_norm_state_action_pair
+from utils import z_norm
 
 # only state-action pair
 class Trainer:
@@ -23,11 +23,6 @@ class Trainer:
         self.state_std = torch.tensor(self.std_state_action[:96]).to(self.config.get("device"))
         self.action_mean = torch.tensor(self.mean_state_action[96:]).to(self.config.get("device"))
         self.action_std = torch.tensor(self.std_state_action[96:]).to(self.config.get("device"))
-
-        self.jmin = torch.tensor([-2.5306999683380127, -0.5235999822616577, -2.7576000690460205, -0.08726699650287628, -0.8726699948310852, -0.26179999113082886, -2.5306999683380127, -2.967099905014038, -2.7576000690460205, -0.08726699650287628, -0.8726699948310852, -0.26179999113082886, -2.618000030517578, -0.5199999809265137, -0.5199999809265137, -3.089200019836426, -1.5881999731063843, -2.618000030517578, -1.0471999645233154, -1.9722199440002441, -1.6144299507141113, -1.6144299507141113, -3.089200019836426, -2.251499891281128, -2.618000030517578, -1.0471999645233154, -1.9722199440002441, -1.6144299507141113, -1.6144299507141113]).to(self.config.get("device"))
-        self.jmax = torch.tensor([2.8798000812530518, 2.967099905014038, 2.7576000690460205, 2.8798000812530518, 0.5235999822616577, 0.26179999113082886, 2.8798000812530518, 0.5235999822616577, 2.7576000690460205, 2.8798000812530518, 0.5235999822616577, 0.26179999113082886, 2.618000030517578, 0.5199999809265137, 0.5199999809265137, 2.6703999042510986, 2.251499891281128, 2.618000030517578, 2.094399929046631, 1.9722199440002441, 1.6144299507141113, 1.6144299507141113, 2.6703999042510986, 1.5881999731063843, 2.618000030517578, 2.094399929046631, 1.9722199440002441, 1.6144299507141113, 1.6144299507141113]).to(self.config.get("device"))
-        self.tau_min = torch.tensor([-25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -88.0, -88.0, -88.0, -88.0, -88.0, -139.0, -139.0, -139.0, -139.0, -5.0, -5.0, -5.0, -5.0, -50.0, -50.0, -50.0, -50.0, -50.0, -50.0]).to(self.config.get("device"))
-        self.tau_max = torch.tensor([25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 88.0, 88.0, 88.0, 88.0, 88.0, 139.0, 139.0, 139.0, 139.0, 5.0, 5.0, 5.0, 5.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]).to(self.config.get("device"))
 
         self.replay_buffer = ReplayBuffer(dim=self.config.get("dim"), 
                                           buffer_size=self.config.get("buffer_size"), 
@@ -51,110 +46,90 @@ class Trainer:
         # normalize the state and action
         obs = torch.cat((state_[..., :67], torques), dim=-1)
         action = self.scale_policy_actions(action)
-        # obs_norm, action_norm = z_norm(obs, action, self.state_mean, self.state_std, self.action_mean, self.action_std)
-        state_action_pair = torch.concat([obs, action], dim=-1)
-        obs_norm, action_norm = minmax_norm_state_action_pair(state_action_pair, 
-                                                              self.jmin,
-                                                              self.jmax,
-                                                              self.tau_min,
-                                                              self.tau_max)
-        
+        # obs_norm, action_norm = self.normalize_state_and_action(obs, action)
+        obs_norm, action_norm = z_norm(obs, action, self.state_mean, self.state_std, self.action_mean, self.action_std)
+        # print("before scaled actions")
+        obs_norm.to(self.config["device"])
+        # print("\n\n\n")
+        # print("actions scaled\n\n\n")
+        # print(type())
         self.replay_buffer.insert([obs_norm.to(self.config["device"]), 
                                    action_norm.to(self.config["device"]), 
                                    torch.unsqueeze(termination.to(self.config["device"]), dim=-1)])
 
 
-
-    def on_the_fly_update(self, itr):
+    def on_the_fly_update(self):
         print("inside on the fly update")
         if self._initialized_ is None:
-            # params
-            self.M, self.N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
-            self.decay = self.config['world_model_training_params']['forecast_decay']
-            self.state_dims = self.config['robot_params']['state_dims']
-            self.action_dims = self.config['robot_params']['action_dims']
-            self.num_mini_batches = self.config["world_model_training_params"]["num_mini_batches"]
-            self.total_epochs = self.config['world_model_training_params']['epochs']
-            self.total_grad_steps = self.num_mini_batches * self.total_epochs 
-
             # create model instance
+            M, N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
+            decay = self.config['world_model_training_params']['forecast_decay']
+            state_dims = self.config['robot_params']['state_dims']
+            action_dims = self.config['robot_params']['action_dims']
+            self.num_mini_batches = self.config["world_model_training_params"]["num_mini_batches"]
+
+
             self.world_model = CreateWorlModelInstance(self.config)
             self.world_model.train()
             print('World Model instantiated\n\n\n')
             count_parameters(self.world_model)
-
-            # model dir 
-            model_type = "wm_gru"
-            self.model_dir_name = get_model_name(model_type)
-            print('this is the model name : ', self.model_dir_name)
-
-            self._initialized_ = True
-        
-
-        # load checkpoints
-        if self.config["use_ckpt"]:
-            self.world_model = LoadCkpt(self.world_model,
-                                   self.config["ckpt_name"],
-                                   self.config["ckpt_dir"]) 
-
             
-        
-
-        # # get the batch data from the replay buffer and do world model update
-        # idx = 1
-        # for num_mb, batch in enumerate(self.replay_buffer.mini_batch_generator(sequence_length=M+N, 
-        #                                                                        num_mini_batch=self.config['world_model_training_params']['num_mini_batches'], 
-        #                                                                        mini_batch_size=self.config['world_model_training_params']['mini_batch_size'])):
-        #     print("\n",type(batch))
-        #     print("batch num : ", idx)
-        #     print(num_mb)
-        #     print(batch[0].shape)
-        #     print(batch[1].shape)
-        #     print(batch[2].shape)
-        #     states = batch[0]
-        #     terminations = batch[-1]
-        #     print(states[0, :, :])
-        #     print("\n")
-        #     print(terminations[0, :, :])
-        #     idx += 1
-        #     x = torch.concat([batch[0], batch[1]], dim=-1)
-        #     print(x.shape)
             
-        #     print("\n")
-
-        print("\n\n################")
-        print("Training WM")
         training_loss = []
-        self.grad_step = 1
-        for epoch in range(1, self.total_epochs+1):
+
+        # get the batch data from the replay buffer and do world model update
+        idx = 1
+        for num_mb, batch in enumerate(self.replay_buffer.mini_batch_generator(sequence_length=M+N, 
+                                                              num_mini_batch=self.config['world_model_training_params']['num_mini_batches'], 
+                                                              mini_batch_size=self.config['world_model_training_params']['mini_batch_size'])):
+            print("\n",type(batch))
+            print("batch num : ", idx)
+            print(num_mb)
+            print(batch[0].shape)
+            print(batch[1].shape)
+            print(batch[2].shape)
+            states = batch[0]
+            terminations = batch[-1]
+            print(states[0, :, :])
+            print("\n")
+            print(terminations[0, :, :])
+            idx += 1
+            x = torch.concat([batch[0], batch[1]], dim=-1)
+            print(x.shape)
+            
+            print("\n")
+
+
+        for epoch in range(1, self.config['world_model_training_params']['epochs']+1):
+            print(f'start of epoch {epoch}')
             # Iterate over batches
             epoch_loss = 0.0
-            for mb_idx, batch in enumerate(self.replay_buffer.mini_batch_generator(sequence_length=self.M+self.N, 
-                                                                                   num_mini_batch=self.config['world_model_training_params']['num_mini_batches'], 
-                                                                                   mini_batch_size=self.config['world_model_training_params']['mini_batch_size'])):
+            print("WM Training")
+            print("Epoch : ", epoch)
+            for mb_idx, batch in enumerate(self.replay_buffer.mini_batch_generator(sequence_length=M+N, 
+                                                              num_mini_batch=self.config['world_model_training_params']['num_mini_batches'], 
+                                                              mini_batch_size=self.config['world_model_training_params']['mini_batch_size'])):
+
                 
-                # print(batch.shape)
-                print(f"\rGradient steps : {self.grad_step}/{self.total_grad_steps}", end="", flush=True)          
+                print(f"\r{mb_idx}/{self.num_mini_batches}", end="", flush=True)          
 
                 x = torch.concat([batch[0], batch[1]], dim=-1)
-                # print(x.shape)
-                batch_loss = self.rnn_rollout_steps(x)
-                
-                epoch_loss += batch_loss
-            
-            training_loss.append(epoch_loss)
-        print("\n################\n")
-
-
-        # save model
-        if itr % 10 == 0:
-            model_name = f'wm-itr_{itr}.pth'
-            SaveModel(self.world_model, model_name, self.model_dir_name)
+                self.rnn_rollout_steps(x, 
+                                       self.world_model, 
+                                       state_dims,
+                                       action_dims,
+                                       decay,
+                                       M)
 
 
 
 
-    def rnn_rollout_steps(self, x):
+
+
+            break
+
+
+    def rnn_rollout_steps(self, x, world_model, state_dims, action_dims, decay, M):
 
         ht = torch.zeros((self.config['world_model_arch_params']['num_gru_layers'], 
                           x.shape[0], 
@@ -167,40 +142,31 @@ class Trainer:
         # Iterate over RNN timestamps
         for t in range(seq_len-1):
             loss_t = 0
-            if t < self.M-1:
-                ht = self.world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), 
+            if t < M-1:
+                ht = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), 
                                             ht, predict=False) # torch.unsqueeze(x[:, t, :], dim=1) => (bs, s_dim+a_dim) -> (bs, 1, s_dim+a_dim)
             else:
-                if t == self.M-1:
+                if t == M-1:
                     x_prev = torch.unsqueeze(x[:, t, :96], dim=1)
                     # std_logits, state_mean
-                    st_next_pred, ht, std_logits, state_mean = self.world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
+                    st_next_pred, ht = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
                 else:
-                    st_next_pred, ht, std_logits, state_mean = self.world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -self.action_dims:], dim=1)), dim=2), 
+                    st_next_pred, ht = world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -action_dims:], dim=1)), dim=2), 
                                                                             ht, predict=True, x_prev=st_next_pred)
-                target = torch.unsqueeze(x[:, t+1, :self.state_dims], dim=1)
+                target = torch.unsqueeze(x[:, t+1, :state_dims], dim=1)
                 # loss_t = world_model.nll_loss(dist, target)
                 # print(st_next_pred.shape)
                 # print(target.shape)
                 # print("\n")
-                # loss_t = self.world_model.mse_loss(st_pred=torch.squeeze(st_next_pred, dim=1),
-                #                                   st_true=torch.squeeze(target, dim=1))
-                loss_t = self.world_model.gnll_loss(state_mean=state_mean,
-                                               state_std=std_logits,
-                                               state_target=target)
+                loss_t = world_model.mse_loss(st_pred=torch.squeeze(st_next_pred, dim=1),
+                                                st_true=torch.squeeze(target, dim=1))
+                # loss_t = world_model.gnll_loss(state_mean=state_mean,
+                #                                state_std=std_logits,
+                #                                state_target=target)
                 batch_loss += alpha * loss_t
-                alpha *= self.decay
+                alpha *= decay
 
-        batch_loss /= self.N
 
-        # optimize
-        self.world_model.optimizer.zero_grad()
-        batch_loss.backward()
-        self.world_model.optimizer.step()
-        
-        self.grad_step += 1
-
-        return batch_loss
 
 
     def update(self, model_type, load_dataset):
