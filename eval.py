@@ -1,5 +1,5 @@
 """
-python eval.py --checkpoint saved_models2/model_2999.pt --num-envs 1 --steps 1000 --viewer none 
+python eval.py --checkpoint saved_models_2/model_2999.pt --num-envs 1 --steps 1000 --viewer none 
 """
 from __future__ import annotations
 
