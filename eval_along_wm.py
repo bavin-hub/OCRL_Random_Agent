@@ -170,8 +170,8 @@ def main() -> None:
 
     # load world model
     world_model = CreateWorlModelInstance(config)
-    model_name = "wm-itr_2590.pth"
-    model_dir_name = "wm_gru_2026-04-30_20:29:54"
+    model_name = "wm-itr_1000.pth"
+    model_dir_name = "wm_gru_2026-05-03_20:48:22"
     world_model = LoadModel(world_model, model_name, model_dir_name)
     print("successfully loaded world model")
 
@@ -181,7 +181,7 @@ def main() -> None:
     if args.device is not None:
         device = args.device
     else:
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     use_viewer = args.viewer != "none"
     env, _actor, policy, num_actions, ckpt_path, render_mode = _build_env_and_actor(
@@ -214,9 +214,18 @@ def main() -> None:
             ep_len = torch.zeros(args.num_envs, device=device)
 
             with torch.inference_mode():
-                for step in range(args.steps):
-                    
-                    tau = env.unwrapped.scene["robot"].data.actuator_force.to(device)
+                for step in range(args.steps):                
+                    robot = env.unwrapped.scene["robot"]
+                    base_lin_vel = robot.data.root_link_lin_vel_w.to(device)      # (num_envs, 3) world frame
+                    base_ang_vel = robot.data.root_link_ang_vel_w.to(device)      # (num_envs, 3) world frame
+                    projected_gravity = robot.data.projected_gravity_b.to(device)  # (num_envs, 3) base frame
+                    joint_pos = robot.data.joint_pos.to(device)                   # (num_envs, num_joints)
+                    joint_vel = robot.data.joint_vel.to(device)   
+                    tau = robot.data.actuator_force.to(device)
+
+                    robot_state = torch.concat([base_lin_vel, base_ang_vel, projected_gravity, joint_pos, joint_vel, tau], dim=-1)
+
+                   
 
                     actions = policy(obs_td)
                     next_obs, rewards, dones, _extras = env.step(actions)
@@ -235,14 +244,15 @@ def main() -> None:
                     )
                     # normalize state and scaled actions using imported z_norm function (TODO)
                     # obs_norm, action_norm = z_norm(
-                    #     obs_vec,
+                    #     robot_state,
                     #     scaled_act,
                     #     state_mean.to(device),
                     #     state_std.to(device),
                     #     action_mean.to(device),
                     #     action_std.to(device),
                     # )
-                    state_action_pair = torch.concat([obs_vec, scaled_act], dim=-1)
+                    state_action_pair = torch.concat([robot_state, scaled_act], dim=-1)
+                    # print(state_action_pair)
                     obs_norm, action_norm = minmax_norm_state_action_pair(state_action_pair, 
                                                                           jmin,
                                                                           jmax,
@@ -259,6 +269,7 @@ def main() -> None:
                     ep_len += 1.0
                     done_mask = dones > 0.5
                     if done_mask.any():
+                        print("i think i am done")
                         for i in done_mask.nonzero(as_tuple=False).view(-1).tolist():
                             print(
                                 f"[episode] env={i} return={ep_return[i].item():.3f} "
@@ -328,6 +339,8 @@ def main() -> None:
 
                 print("till here")
                 print(x.shape)
+                print(x)
+                print("\n\n")
 
                 with torch.inference_mode():
                     for t in range(max_steps - 1):
@@ -398,6 +411,7 @@ def main() -> None:
                     transition = true_traj[i, :]
                     state = transition[:state_dims].tolist()
                     velocities = state[:6]
+                    print(velocities, "\n\n")
                     lin_vel_x.append(velocities[0])
                     lin_vel_y.append(velocities[1])
                     lin_vel_z.append(velocities[2])

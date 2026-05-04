@@ -35,6 +35,7 @@ class ReplayBuffer:
 
         def _insert_into_buffer(r_buf, i_buf):
             i_buf = torch.unsqueeze(i_buf, dim=1)
+            # print(i_buf.shape)
             num_inputs = i_buf.shape[1]
             end_idx = self.step + num_inputs
             if end_idx > self.buffer_size:

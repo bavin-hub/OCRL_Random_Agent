@@ -18,6 +18,7 @@ from mjlab.utils.torch import configure_torch_backends
 
 from runners.train import Trainer
 import json
+import numpy as np
 
 TASK_ID = "Mjlab-Velocity-Flat-Unitree-G1"
 NUM_ENVS = 4096
@@ -59,7 +60,7 @@ def save_model(algo: PPO, iteration: int, save_dir: str = "saved_models") -> Pat
 def main() -> None:
     ############## rsl_rl inits ##############
     configure_torch_backends()
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(42)
 
     env_cfg = load_env_cfg(TASK_ID)
@@ -135,9 +136,24 @@ def main() -> None:
     print(f"[INFO] task={TASK_ID} device={device} num_envs={NUM_ENVS} obs_dim={obs_dim} actions={num_actions}")
 
     for it in range(MAX_ITERATIONS):
-        with torch.inference_mode():
+        with torch.no_grad():
             for _ in range(NUM_STEPS):
-                tau = env.unwrapped.scene["robot"].data.actuator_force
+                robot = env.unwrapped.scene["robot"]
+                base_lin_vel = robot.data.root_link_lin_vel_w.to(device)      # (num_envs, 3) world frame
+                base_ang_vel = robot.data.root_link_ang_vel_w.to(device)      # (num_envs, 3) world frame
+                projected_gravity = robot.data.projected_gravity_b.to(device)  # (num_envs, 3) base frame
+                joint_pos = robot.data.joint_pos.to(device)                   # (num_envs, num_joints)
+                joint_vel = robot.data.joint_vel.to(device)   
+                tau = robot.data.actuator_force.to(device)
+
+                # single_env_proj_gravity = torch.linalg.vector_norm(projected_gravity[:100, :], dim=-1)
+                # print(single_env_proj_gravity, "\n\n")
+
+                robot_state = torch.concat([base_lin_vel, base_ang_vel, projected_gravity, joint_pos, joint_vel, tau], dim=-1)
+                # print(from_env.shape)
+                # print("directly from robot")
+                # print(from_env[0, :].detach().cpu().numpy())
+                
                 actions = algo.act(obs_td)
                 next_obs, rewards, dones, extras = env.step(actions.to(env.device))
                 check_nan(next_obs, rewards, dones)
@@ -150,8 +166,15 @@ def main() -> None:
                 algo.process_env_step(next_obs_td, rewards, dones, extras)
 
                 # update obs, actions, dones to rwm replay_buffer that is inside our world model code
-                # print(obs_td["policy"].shape)
-                trainer.insert_into_replay_buffer(obs_td["policy"], 
+                # print(obs_td["policy"][:, :67].shape)
+                # print("from mjlab")
+                # print(obs_td["policy"][0, :67].detach().cpu().numpy())
+                # np.set_printoptions(suppress=True, precision=4)
+                # print("\n\n")
+
+
+
+                trainer.insert_into_replay_buffer(robot_state, 
                                                   tau, 
                                                   actions, 
                                                   dones)

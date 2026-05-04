@@ -367,7 +367,7 @@ def minmax_norm_state_action_pair(
 
     n_base_lin = _normalize_symmetric_t(base_lin, base_lin_vel_limit)
     n_base_ang = _normalize_symmetric_t(base_ang, base_ang_vel_limit)
-    n_grav = _normalize_symmetric_t(grav, gravity_limit)
+    n_grav = _normalize_symmetric_t(grav, bound=1)
     n_jq = _normalize_to_minus_one_one_t(jq, jlo, jhi)
     n_jv = _normalize_symmetric_t(jv, joint_vel_limit)
     n_tau = _normalize_to_minus_one_one_t(tau, tlo, thi)

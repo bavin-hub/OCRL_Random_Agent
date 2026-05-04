@@ -106,7 +106,7 @@ from typing import Tuple
 class RandomWorldStepGru(nn.Module):
     def __init__(self, batch_size: int, state_dim: int, contact_dim: int, action_dim: int, embed_dim: int, 
                        hidden_dim: int, num_gru_layers: int, mlp_dim: int, lr: float, weight_decay: float, 
-                       device: str, b: int = 0, std_range: Tuple = (0.03,5), std_init: float = 0.4):
+                       device: str, b: int = 0, std_range: Tuple = (0.03,0.5), std_init: float = 0.4):
         super(RandomWorldStepGru, self).__init__()
 
         # (0.01, 0.06)
