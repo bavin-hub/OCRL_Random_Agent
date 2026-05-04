@@ -8,18 +8,11 @@ def count_parameters(model: torch.nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 
 
-def load_synthetic_batches(batch_size, state_dim, action_dim, device, **kwargs):
-    while True:
-        st_at = torch.randn(batch_size, state_dim + action_dim, device=device)
-        st_next = torch.randn(batch_size, state_dim, device=device)
-        yield st_at, st_next
-
-
 class Trainer:
     def __init__(self, config: dict):
         self.config = config
 
-    def update(self, model_type: str, load_dataset=load_synthetic_batches):
+    def update(self, model_type: str, load_dataset):
         wt = self.config["world_model_training_params"]
         rp = self.config["robot_params"]
         arch = self.config["world_model_arch_params"]
@@ -28,9 +21,6 @@ class Trainer:
 
         self.data_loader = load_dataset(
             batch_size=wt["batch_size"],
-            state_dim=S,
-            action_dim=A,
-            device=device,
             db_paths=self.config.get("db_paths"),
             db_path=self.config.get("db_path"),
             combined_db_path=self.config.get("combined_db_path"),
@@ -38,7 +28,7 @@ class Trainer:
             mean=self.config.get("mean_state_action"),
             std=self.config.get("std_state_action"),
         )
-
+        
         world_model = TransWM(
             state_dim=S,
             action_dim=A,
@@ -76,18 +66,19 @@ class Trainer:
             for step, batch in enumerate(self.data_loader):
                 if step >= steps:
                     break
+                x = batch.to(device)  # (B, T, S+A)
 
-                st_at, st_next = batch
-                st_at = st_at.to(device)
-                st_next = st_next.to(device)
+                st = x[:, :, :S]
+                at = x[:, :, S:S+A]
 
-                st = st_at[:, :S]
-                at = st_at[:, S : S + A]
+                st_next = st[:, 1:, :].reshape(-1, S)
 
+                st = st[:, :-1, :].reshape(-1, S)
+                at = at[:, :-1, :].reshape(-1, A)
                 mu, _std = world_model(
                     st, at, predict=True, sample=True, x_prev=st
                 )
-                batch_loss = F.mse_loss(mu, st_next)
+                batch_loss = world_model.gnll_loss(mu, _std, st_next)
 
                 world_model.optimizer.zero_grad()
                 batch_loss.backward()
@@ -138,4 +129,4 @@ if __name__ == "__main__":
         "use_ckpt": False,
         "steps_per_epoch": 20,
     }
-    Trainer(cfg).update("transwm_demo")
+    Trainer(cfg).update("transwm_demo", load_dataset=load_dataset)
