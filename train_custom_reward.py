@@ -3,19 +3,15 @@ usage:
 python train_custom_reward.py
 """
 
-
-
-
-
 from __future__ import annotations
 
+import math
 import torch
 from pathlib import Path
 from tensordict import TensorDict
 
-import mjlab.tasks  
+import mjlab.tasks
 from mjlab.envs import ManagerBasedRlEnv
-from mjlab.tasks.velocity.mdp import foot_air_time, foot_contact
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.tasks.registry import load_env_cfg
 from mjlab.utils.torch import configure_torch_backends
@@ -109,7 +105,6 @@ def setup_reward_constants(device):
     # Pre-shift limits into the relative joint-pos frame used by the actor obs
     # (obs gives q - q_default, so compare against limits in the same frame).
     return {
-        "default_joint_pos": default_jp,
         "soft_limits_lo_rel": lo_abs - default_jp,
         "soft_limits_hi_rel": hi_abs - default_jp,
         "std_standing": torch.tensor(G1_STD_STANDING, device=device, dtype=torch.float32),
@@ -119,7 +114,6 @@ def setup_reward_constants(device):
 
 
 def to_obs_tensordict(obs: torch.Tensor | TensorDict, device: str) -> TensorDict:
-   
     if isinstance(obs, TensorDict):
         if "policy" in obs.keys():
             policy_obs = obs["policy"]
@@ -166,69 +160,32 @@ def save_model(algo: PPO, iteration: int, save_dir: str = "saved_models") -> Pat
     torch.save(payload, checkpoint_path)
     return checkpoint_path
 
+
 def custom_reward(
     cmd_vels: torch.Tensor,
     obs_td: TensorDict,
     next_obs_td: TensorDict,
     last_actions: torch.Tensor,
     actions: torch.Tensor,
-    tau: torch.Tensor,
-    foot_air_time_t: torch.Tensor,
-    foot_contact_t: torch.Tensor,
     consts: dict,
 ) -> torch.Tensor:
-
+    # Kinematic-only reward (mirrors world_model_env). No contacts, no torques.
     w_v_xy = 1.0
-    w_v_z = 0.0          # folded into r_v_xy exp (mirrors world_model_env)
-    w_q_tau = 0.0        # non-kinematic; not in world_model_env
-    w_a_dot = -0.05
-    w_c = 0.0
-    w_fc = 1.0
     w_omega_z = 1.0
     w_omega_xy = -0.05
     w_q_ddot = -2.5e-7
-    w_fa = 0.0
-    w_foot_contact = 0.0  # not in world_model_env
+    w_a_dot = -0.05
     w_g = -1.0
-    w_q_d = -1.0
-    w_stand_still = -1.0
     w_joint_pos_limits = -10.0
     w_pose = 1.0
 
-    sigma_v_xy = 0.25
-    sigma_omega_z = 0.25
     step_dt = 0.02
-
-    # w_v_xy = 1.0
-    # w_v_z = -2.0
-    # w_q_tau = -2.5e-5
-    # w_a_dot = -0.05
-    # w_c = 0.0
-    # w_fc = 1.0
-    # w_omega_z = 0.5
-    # w_omega_xy = -0.05
-    # w_q_ddot = -2.5e-7
-    # w_fa = 1.0
-    # w_foot_contact = 0.1
-    # w_g = -5.0
-    # w_q_d = -1.0
-    # w_stand_still = -0.1
-
-    # sigma_v_xy = 0.25
-    # sigma_omega_z = 0.25
-    # step_dt = 0.02
-
-    def sq_l2(x: torch.Tensor) -> torch.Tensor:
-        return (x * x).mean(dim=-1)
 
     policy = obs_td["policy"]
     next_policy = next_obs_td["policy"]
     n = policy.shape[0]
-    device = policy.device
     dtype = policy.dtype
 
-    c_xy = cmd_vels[:, :2]
-    cz = cmd_vels[:, 2:3]
     a_dim = actions.shape[-1]
     tail = policy.shape[1] - 12 - a_dim - 3
     j_dim = tail // 2
@@ -238,104 +195,42 @@ def custom_reward(
     omega_xy = next_policy[:, 3:5]
     omega_z = next_policy[:, 5:6]
     g_xy = next_policy[:, 6:8]
-    q = policy[:, 9 : 9 + j_dim]
     q_next = next_policy[:, 9 : 9 + j_dim]
     q_vel = policy[:, 9 + j_dim : 9 + 2 * j_dim]
     q_vel_next = next_policy[:, 9 + j_dim : 9 + 2 * j_dim]
     q_ddot = (q_vel_next - q_vel) / step_dt
 
-    tau = tau.to(device=device, dtype=dtype)
-    ft = foot_air_time_t.to(device=device, dtype=dtype)
-    fc = foot_contact_t.to(device=device, dtype=dtype)
-    cu_f = torch.zeros(n, device=device, dtype=dtype)
-    hfc_f = torch.zeros(n, device=device, dtype=dtype)
-
-    cz_f = cz.reshape(n, -1).squeeze(-1)
+    c_xy = cmd_vels[:, :2]
+    cz_f = cmd_vels[:, 2:3].reshape(n, -1).squeeze(-1)
     oz_f = omega_z.reshape(n, -1).squeeze(-1)
     vz_f = vz.reshape(n, -1).squeeze(-1)
 
-    # Track lin vel: fold xy and z error inside the exp (world_model_env style (ripoff from mjlab vel tracking))
+    # Track lin vel (xy + z folded into the same exp; world_model_env style).
     d_xy = c_xy - v_xy
     xy_err_sum = (d_xy * d_xy).sum(dim=-1)
     z_err_sum = vz_f * vz_f
     r_v_xy = w_v_xy * torch.exp(-(xy_err_sum + z_err_sum) / 0.25)
 
-    # Track ang vel_z (world_model_env: exp(-z_err / 0.5))
+    # Track ang vel z.
     d_z = cz_f - oz_f
     r_omega_z = w_omega_z * torch.exp(-(d_z * d_z) / 0.5)
 
-    # # Lin vel z (vertical base velocity); not a separate v_x penalty
-    # r_v_z = w_v_z * 0.5 * (vz_f * vz_f)
-
-    # # Ang vel_xy (roll/pitch rates)
-    # r_omega_xy = w_omega_xy * 0.5 * sq_l2(omega_xy)
-
-    # # Joint / actuator torques
-    # r_q_tau = w_q_tau * 0.5 * sq_l2(tau)
-
-    # # Joint acceleration
-    # r_q_ddot = w_q_ddot * 0.5 * sq_l2(q_ddot)
-
-    # # Action rate
-    # r_a_dot = w_a_dot * 0.5 * sq_l2(actions - last_actions)
-
-    # Lin vel z (vertical base velocity); not a separate v_x penalty
-    r_v_z = w_v_z * (vz_f * vz_f)
-
-    # Ang vel_xy (roll/pitch rates) — sum to mirror world_model_env
+    # Penalties: roll/pitch rates, joint accel, action rate, flat orientation.
     r_omega_xy = w_omega_xy * (omega_xy * omega_xy).sum(dim=-1)
-
-    # Joint / actuator torques (non-kinematic; weight zeroed)
-    r_q_tau = w_q_tau  * sq_l2(tau) #disabled
-    # r_q_tau = torch.clamp(r_q_tau, min=-1.0)
-
-    # Joint acceleration — sum to mirror world_model_env
     r_q_ddot = w_q_ddot * (q_ddot * q_ddot).sum(dim=-1)
-
-    # Action rate sum 
-    r_a_dot = w_a_dot  * ((actions - last_actions) ** 2).sum(dim=-1)
-
-    # Feet air time (mjlab-style: in-range per foot, gated by command magnitude)
-    air_min, air_max = 0.05, 0.5
-    in_air_range = (ft > air_min) & (ft < air_max)
-    r_fa_air = torch.sum(in_air_range.float(), dim=1)
-    cmd_scale = (
-        torch.norm(cmd_vels[:, :2], dim=1) + torch.abs(cmd_vels[:, 2]) > 0.5
-    ).to(dtype=dtype)
-    r_fa = w_fa * r_fa_air * cmd_scale
-
-    # Foot contact: reward feet on ground (sum of binary contacts per env)
-    r_foot_c = w_foot_contact * torch.sum(fc, dim=1)
-
-    # Undesired contacts (disabled)
-    r_c = w_c * cu_f
-
-    # Flat orientation (projected gravity xy) — sum to mirror world_model_env
+    r_a_dot = w_a_dot * ((actions - last_actions) ** 2).sum(dim=-1)
     r_g = w_g * (g_xy * g_xy).sum(dim=-1)
 
-    # Foot clearance (not in actor obs without critic terms)
-    r_fc = w_fc * hfc_f
-
-    # # Joint deviation from default (actor uses joint_pos relative; post-step pose)
-    r_q_d = w_q_d * q_next.abs().sum(dim=-1)
-
-    # stand_still: sum((q - q_default)²) gated by total_speed <= 0.1.
-    # q_next is already (q_abs - q_default), so squared error is q_next**2.
-    total_cmd_speed = torch.norm(cmd_vels[:, :2], dim=1) + torch.abs(cmd_vels[:, 2])
-    stand_still = (q_next * q_next).sum(dim=-1) * (total_cmd_speed <= 0.1).to(dtype=dtype)
-    r_stand_still = w_stand_still * stand_still
-
-    # joint_pos_limits (soft limit penalty). q is in joint_pos_rel frame
-    # (q_abs - q_default), and consts["soft_limits_*_rel"] are pre-shifted
-    # into the same frame at startup.
+    # Joint soft-limit penalty. q_next is in (q_abs - q_default) frame; limits
+    # are pre-shifted to match.
     lo_rel = consts["soft_limits_lo_rel"][:j_dim]
     hi_rel = consts["soft_limits_hi_rel"][:j_dim]
     below = -(q_next - lo_rel).clamp(max=0.0)
     above = (q_next - hi_rel).clamp(min=0.0)
     r_joint_pos_limits = w_joint_pos_limits * torch.sum(below + above, dim=1)
 
-    # pose / variable_posture: speed-dependent posture tracking. Since q_next
-    # is already (q_abs - q_default), the squared error is just q_next**2.
+    # Speed-dependent posture tracking. q_next is already (q_abs - q_default),
+    # so the per-joint squared error is just q_next**2.
     total_speed = torch.norm(cmd_vels[:, :2], dim=1) + torch.abs(cmd_vels[:, 2])
     standing = (total_speed < 0.5).to(dtype=dtype).unsqueeze(1)
     walking = ((total_speed >= 0.5) & (total_speed < 1.5)).to(dtype=dtype).unsqueeze(1)
@@ -343,40 +238,45 @@ def custom_reward(
     std = (consts["std_standing"][:j_dim] * standing
            + consts["std_walking"][:j_dim] * walking
            + consts["std_running"][:j_dim] * running)
-    pose_err_sq = q_next * q_next
-    r_pose = w_pose * torch.exp(-torch.mean(pose_err_sq / (std * std), dim=1))
-
-    # print(r_v_xy)
-    # print(r_omega_z)
-    # print(r_v_z)
-    # print(r_omega_xy)
-    # print(r_q_tau)
-    # print(r_q_ddot)
-    # print(r_a_dot)
-    # print(r_fa)
-    # print(r_foot_c)
-    # print(r_c)
-    # print(r_stand_still)
-    # print(r_g)
-    # print("\n\n")
+    r_pose = w_pose * torch.exp(-torch.mean((q_next * q_next) / (std * std), dim=1))
 
     return (
         r_v_xy
         + r_omega_z
-        + r_v_z
         + r_omega_xy
-        + r_q_tau
         + r_q_ddot
         + r_a_dot
-        + r_fa
-        + r_foot_c
-        + r_c
-        #+ r_stand_still
         + r_g
         + r_joint_pos_limits
         + r_pose
-        + 0.0
     )
+
+
+# Default fell-over threshold (matches Mjlab-Velocity-Flat-Unitree-G1).
+FELL_OVER_LIMIT_RAD = math.radians(70.0)
+
+
+def custom_dones(
+    next_obs_td: TensorDict,
+    episode_lengths: torch.Tensor,
+    max_episode_length: int,
+    fell_over_limit_rad: float = FELL_OVER_LIMIT_RAD,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mirror the velocity-G1 task's terminations.
+
+    Returns (dones, time_outs). Both are bool, shape [N].
+
+    - time_outs: episode_length >= max_episode_length (mjlab.envs.mdp.time_out).
+    - fell_over: tilt angle > limit. mjlab.envs.mdp.bad_orientation uses
+      acos(-g_z) > limit. Equivalently, since projected_gravity_b is unit norm,
+      |g_xy|² = sin²(tilt), so the test is |g_xy|² > sin²(limit). This avoids
+      needing g_z and uses the same obs slice the reward already reads.
+    """
+    g_xy = next_obs_td["policy"][:, 6:8]
+    fell_over = (g_xy * g_xy).sum(dim=-1) > math.sin(fell_over_limit_rad) ** 2
+    time_outs = episode_lengths >= max_episode_length
+    dones = (time_outs | fell_over).to(dtype=torch.bool)
+    return dones, time_outs.to(dtype=torch.bool)
 
 
 def main() -> None:
@@ -444,8 +344,9 @@ def main() -> None:
     algo.train_mode()
 
     last_actions = torch.zeros(NUM_ENVS, num_actions, device=device)
-
     consts = setup_reward_constants(device)
+    max_ep_len = int(env.unwrapped.max_episode_length)
+    print(f"[INFO] max_episode_length={max_ep_len} fell_over_limit={math.degrees(FELL_OVER_LIMIT_RAD):.0f}deg")
 
     ep_return = torch.zeros(NUM_ENVS, device=device)
     ep_length = torch.zeros(NUM_ENVS, device=device, dtype=torch.long)
@@ -456,44 +357,40 @@ def main() -> None:
     for it in range(MAX_ITERATIONS):
         with torch.inference_mode():
             for _ in range(NUM_STEPS):
-
-
                 cmd_vels = cmd_vels_from_obs(obs_td)
-               
                 actions = algo.act(obs_td)
-                
-                next_obs, rewards, dones, extras = env.step(actions.to(env.device))
-                tau = env.unwrapped.scene["robot"].data.actuator_force
-                ft_sensor = foot_air_time(env.unwrapped, "feet_ground_contact")
-                fc_sensor = foot_contact(env.unwrapped, "feet_ground_contact")
-
-                check_nan(next_obs, rewards, dones)
-
+                next_obs, _env_rewards, _env_dones, extras = env.step(actions.to(env.device))
 
                 next_obs = next_obs.to(device)
-                dones = dones.to(device)
                 next_obs_td = to_obs_tensordict(next_obs, device)
 
-    
                 rewards = custom_reward(
                     cmd_vels,
                     obs_td,
                     next_obs_td,
                     last_actions,
                     actions,
-                    tau,
-                    ft_sensor.to(device),
-                    fc_sensor.to(device),
                     consts,
                 )
-
                 rewards = rewards.to(device)
 
                 last_actions = actions.clone()
 
-                ep_return += rewards
                 ep_length += 1
-                done_mask = dones.bool()
+                # Compute dones in our code; mirrors mjlab time_out + fell_over.
+                # PPO needs `extras["time_outs"]` to bootstrap value at horizon
+                # vs hard-terminate on tilt; produce both from the same logic.
+                dones, time_outs = custom_dones(next_obs_td, ep_length, max_ep_len)
+                extras["time_outs"] = time_outs
+
+                if it == 0 and _ == 0:
+                    print(f"[parity] custom dones match env: "
+                          f"{torch.equal(dones, _env_dones.to(device).bool())}")
+
+                check_nan(next_obs, rewards, dones)
+
+                ep_return += rewards
+                done_mask = dones
                 if done_mask.any():
                     finished_returns.append(ep_return[done_mask].clone())
                     finished_lengths.append(ep_length[done_mask].clone())
