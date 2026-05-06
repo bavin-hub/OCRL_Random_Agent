@@ -1,6 +1,7 @@
 import json, time
 from tqdm.notebook import trange, tqdm
 from train import Trainer
+from train_mlp import MlpTrainer
 #from runners.eval import Inference
 from data.preprocessor import load_dataset
 
@@ -14,11 +15,14 @@ class Agent:
     def __init__(self, config: dict):
         self.config = config
 
-    
+
     def __call__(self, run_mode, model_type):
 
         if run_mode == 'train':
-            self.trainer = Trainer(self.config)
+            if model_type == 'wm_mlp':
+                self.trainer = MlpTrainer(self.config)
+            else:
+                self.trainer = Trainer(self.config)
             self.train(model_type)
         elif run_mode == 'eval':
             self.evaluator = Inference(self.config)

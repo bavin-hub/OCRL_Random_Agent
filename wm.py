@@ -141,6 +141,82 @@ class TransWM(nn.Module):
         return torch.sum(torch.square(st_pred - st_true), dim=1).mean(dim=0)
 
 
+class MlpWM(nn.Module):
+    def __init__(
+        self,
+        state_dim: int,
+        action_dim: int,
+        hidden_dim: int = 256,
+        num_layers: int = 2,
+        mlp_head_dim: int = 128,
+        with_uncertainty: bool = False,
+        lr: float = 1e-3,
+        weight_decay: float = 0.0,
+        device: str = "cpu",
+        std_range: Tuple[float, float] = (0.01, 0.06),
+    ):
+        super().__init__()
+        assert num_layers >= 1
+
+        d = str(device)
+        if d == "cuda" and not torch.cuda.is_available():
+            d = "cpu"
+        elif d == "mps" and not (
+            hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        ):
+            d = "cpu"
+        self.device = torch.device(d)
+        print(f"Device set to {self.device}")
+        self.state_dim = state_dim
+        self.with_uncertainty = with_uncertainty
+
+        layers = [nn.Linear(state_dim + action_dim, hidden_dim), nn.ReLU()]
+        for _ in range(num_layers - 1):
+            layers += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()]
+        self.backbone = nn.Sequential(*layers)
+
+        self.mean_head = nn.Sequential(
+            nn.Linear(hidden_dim, mlp_head_dim),
+            nn.ReLU(),
+            nn.Linear(mlp_head_dim, state_dim),
+        )
+
+        if with_uncertainty:
+            self.logstd_head = nn.Sequential(
+                nn.Linear(hidden_dim, mlp_head_dim),
+                nn.ReLU(),
+                nn.Linear(mlp_head_dim, state_dim),
+            )
+            self.logstd_range = (float(np.log(std_range[0])), float(np.log(std_range[1])))
+            self.gnll = nn.GaussianNLLLoss()
+
+        self.optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=weight_decay)
+        self.to(self.device)
+
+    def forward(
+        self,
+        s_t: torch.Tensor,
+        a_t: torch.Tensor,
+        x_prev: torch.Tensor = None,
+    ):
+        h = self.backbone(torch.cat([s_t, a_t], dim=-1))
+        mu = self.mean_head(h)
+        if x_prev is not None:
+            mu = mu + x_prev
+
+        if self.with_uncertainty:
+            logstd = self.logstd_head(h).clamp(*self.logstd_range)
+            std = logstd.exp()
+            return mu, std
+        return mu
+
+    def mse_loss(self, st_pred: torch.Tensor, st_true: torch.Tensor):
+        return torch.sum((st_pred - st_true) ** 2, dim=-1).mean()
+
+    def gnll_loss(self, state_mean: torch.Tensor, state_std: torch.Tensor, state_target: torch.Tensor):
+        return self.gnll(state_mean, state_target, state_std ** 2)
+
+
 if __name__ == "__main__":
     B, S, A = 8, 12, 4
     m = TransWM(
@@ -156,3 +232,8 @@ if __name__ == "__main__":
     out, std = m(st, at, predict=True, sample=False, x_prev=st)
     assert out.shape == (B, S) and std.shape == (B, S)
     print("TransWM smoke OK:", out.shape, std.shape)
+
+    mlp = MlpWM(state_dim=S, action_dim=A, hidden_dim=64, num_layers=2, mlp_head_dim=32, device="cpu")
+    mu = mlp(st, at, x_prev=st)
+    assert mu.shape == (B, S)
+    print("MlpWM smoke OK:", mu.shape, "params:", sum(p.numel() for p in mlp.parameters()))

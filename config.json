@@ -1,5 +1,5 @@
 {
-    "device": "cuda",
+    "device": "mps",
     "world_model_training_params": {
         "epochs": 500,
         "batch_size": 1024,
@@ -12,11 +12,18 @@
         "N_pred": 120
     },
     "world_model_arch_params": {
-	"embed_dim": 64,
-	"mlp_dim": 128,
-	"num_heads": 4,
-	"num_layers": 1,
-	"lr": 1e-3
+        "embed_dim": 64,
+        "mlp_dim": 128,
+        "num_heads": 4,
+        "num_layers": 1,
+        "lr": 1e-3
+    },
+    "world_model_arch_params_mlp": {
+        "hidden_dim": 256,
+        "num_layers": 2,
+        "mlp_head_dim": 128,
+        "with_uncertainty": false,
+        "lr": 1e-3
     },
     "policy_arch_params": {
         "policy": {

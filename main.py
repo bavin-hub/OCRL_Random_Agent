@@ -16,6 +16,12 @@ parser.add_argument(
     default='pretraining_rollouts',
     help='Subfolder under data/ containing rollout .db files (e.g. 1000000_transitions)',
 )
+parser.add_argument(
+    '--N',
+    type=int,
+    default=None,
+    help='Rollout horizon for autoregressive WM training. N=1 reduces to one-step teacher forcing. Overrides config.',
+)
 
 
 
@@ -107,6 +113,11 @@ def run(args):
 
     config['model_dir_name'] = args.model_dir_name
     config["model_name"] = args.model_name
+
+    if args.N is not None:
+        if args.N < 1:
+            raise ValueError(f"--N must be >= 1, got {args.N}")
+        config["world_model_training_params"]["N"] = args.N
 
     # Accept: "pretraining_rollouts", "data/pretraining_rollouts", or absolute path.
     if os.path.isabs(args.db_dir_name):
