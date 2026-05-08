@@ -182,14 +182,24 @@ class TrajectoryChunksDataset(Dataset):
                 if len(tuple_window) == (M + N):
                     window = np.array(
                         [
-                            list(chain.from_iterable(single_step_tuple[:1] + single_step_tuple[2:3]))
+                            # [:2] gets (states, contacts), [2:3] gets (actions) -> Total 155 dims
+                            list(chain.from_iterable(single_step_tuple[:2] + single_step_tuple[2:3]))
                             for single_step_tuple in tuple_window
                         ],
                         dtype=np.float32,
                     )
-                    all_windows.append(z_norm(state_action_pair=window,
-                                              mean=self.mean,
-                                              std=self.std))
+                    
+                    # Custom z_norm logic to skip the 30 contact dims
+                    # window is (T, 155). mean is (1, 125). 
+                    # State is 0:96. Contacts is 96:126. Actions is 126:155
+                    state_action_window = np.concatenate([window[:, :96], window[:, 126:]], axis=1) # (T, 125)
+                    normed_state_action = z_norm(state_action_pair=state_action_window, mean=self.mean, std=self.std)
+                    
+                    # Stitch them back together
+                    window[:, :96] = normed_state_action[:, :96]
+                    window[:, 126:] = normed_state_action[:, 96:]
+                    
+                    all_windows.append(window)
 
         random.shuffle(all_windows)
         return all_windows
@@ -204,10 +214,12 @@ class TrajectoryChunksDataset(Dataset):
             return self.all_windows[index]
         start = int(index)
         steps = [self._get_combined_step(start + j) for j in range(self.M + self.N)]
-        return np.array(
-            [list(chain.from_iterable(s[:1] + s[2:3])) for s in steps],
+        window = np.array(
+            [list(chain.from_iterable(s[:2] + s[2:3])) for s in steps],
             dtype=np.float32,
         )
+        # We don't apply z_norm here for now, or if we do, we need to do the same split
+        return window
 
     def get_combined_trajectory(self):
         return self.combined_trajectory

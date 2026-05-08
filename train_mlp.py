@@ -1,6 +1,7 @@
 import os
 import torch
 from wm import MlpWM
+from utils import get_model_name
 
 
 def count_parameters(model: torch.nn.Module) -> int:
@@ -20,6 +21,7 @@ class MlpTrainer:
 
         N = wt["N"]
         decay = wt.get("forecast_decay", 1.0)
+        contact_weight = wt.get("contact_loss_weight", 0.5)
 
         self.data_loader = load_dataset(
             batch_size=wt["batch_size"],
@@ -48,8 +50,10 @@ class MlpTrainer:
         print("World model (MlpWM) instantiated")
         print("Total params:", count_parameters(world_model))
 
-        save_dir = os.path.join(self.config.get("model_dir", "checkpoints"), model_type)
+        run_name = get_model_name(model_type)
+        save_dir = os.path.join(self.config.get("model_dir", "checkpoints"), model_type, run_name)
         os.makedirs(save_dir, exist_ok=True)
+        print(f"checkpoints will be saved to: {save_dir}")
 
         if self.config.get("use_ckpt"):
             ckpt_path = os.path.join(self.config["ckpt_dir"], self.config["ckpt_name"])
@@ -73,13 +77,23 @@ class MlpTrainer:
                 alpha = 1.0
 
                 for t in range(N):
-                    a_t = x[:, t, S:S + A]
-                    mu = world_model(s_pred, a_t, x_prev=s_pred)
+                    c_target = x[:, t + 1, S:S + 30]
+                    a_t = x[:, t, S + 30:S + 30 + A]
+                    out = world_model(s_pred, a_t, x_prev=s_pred)
                     target = x[:, t + 1, :S]
-                    loss_t = world_model.mse_loss(mu, target)
-                    batch_loss = batch_loss + alpha * loss_t
+                    if world_model.with_uncertainty:
+                        mu, contact_pred, std = out
+                        loss_t = world_model.gnll_loss(mu, std, target)
+                        loss_c = world_model.mse_loss(contact_pred, c_target)
+                        # Reparameterization: differentiable sample, teaches noise robustness
+                        s_pred = mu + std * torch.randn_like(std)
+                    else:
+                        mu, contact_pred = out
+                        loss_t = world_model.mse_loss(mu, target)
+                        loss_c = world_model.mse_loss(contact_pred, c_target)
+                        s_pred = mu
+                    batch_loss = batch_loss + alpha * (loss_t + contact_weight * loss_c)
                     alpha *= decay
-                    s_pred = mu
 
                 batch_loss = batch_loss / N
 
@@ -99,7 +113,7 @@ class MlpTrainer:
             #     torch.save(world_model.state_dict(), path)
             #     print("saved", path)
 
-            if epoch % self.config.get("ckpt_save_freq", 10) == 0:
+            if epoch % self.config.get("ckpt_save_freq", 10) == 0 or epoch == 1:
                 path = os.path.join(save_dir, f"{model_type}-ckpt-epoch_{epoch}.pth")
                 torch.save(
                     {
@@ -111,3 +125,4 @@ class MlpTrainer:
                     path,
                 )
                 print("saved ckpt", path)
+

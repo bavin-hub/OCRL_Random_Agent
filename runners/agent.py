@@ -1,8 +1,8 @@
 import json, time
 from tqdm.notebook import trange, tqdm
-from train import Trainer
+from runners.train import Trainer
 from train_mlp import MlpTrainer
-#from runners.eval import Inference
+from runners.eval import Inference
 from data.preprocessor import load_dataset
 
 
@@ -15,7 +15,7 @@ class Agent:
     def __init__(self, config: dict):
         self.config = config
 
-
+    
     def __call__(self, run_mode, model_type):
 
         if run_mode == 'train':
@@ -25,8 +25,14 @@ class Agent:
                 self.trainer = Trainer(self.config)
             self.train(model_type)
         elif run_mode == 'eval':
-            self.evaluator = Inference(self.config)
-            self.inference(model_type)
+            if model_type == 'wm_mlp':
+                # Actually for MLP, eval_mlp is a standalone script right now, or maybe the user runs it directly
+                # Let's just keep Inference for GRU
+                self.evaluator = Inference(self.config)
+                self.inference(model_type)
+            else:
+                self.evaluator = Inference(self.config)
+                self.inference(model_type)
         else:
             raise(f'Unknown run_type parameter - {run_mode}')
     

@@ -1,3 +1,4 @@
+from models.world_model import RandomWorldStepGru
 # contains plot, save, load utils 
 import os, json
 import numpy as np
@@ -167,6 +168,8 @@ def plot_graphs(
     pred_joint_vel=None,
     true_joint_tau=None,
     pred_joint_tau=None,
+    true_contacts=None,
+    pred_contacts=None,
 ):
     """
     State vector layout when extended plots are used:
@@ -196,26 +199,54 @@ def plot_graphs(
         ax.axvline(M, color=c_mark, linestyle="--", linewidth=1.8, label=f"M={M} (history)")
         ax.legend(loc="best", fontsize=8)
 
-    def plot_joint_dict_figure(true_dict, pred_dict, title: str, fname_suffix: str):
-        fig_j, axes_j = plt.subplots(
-            len(JOINT_PICK), 1, figsize=(20, 5 * len(JOINT_PICK)), sharex=True
+    def _rollout_rmse(true_lists, pred_lists):
+        """RMSE over the rollout region (k >= M). pred_list[k] and true_list[k] both hold
+        the value at physical timestep k, so the comparison is direct."""
+        diffs = []
+        for tl, pl in zip(true_lists, pred_lists):
+            if len(pl) <= M or len(tl) <= M:
+                continue
+            p = np.asarray(pl[M:], dtype=np.float64)
+            t = np.asarray(tl[M:], dtype=np.float64)
+            n = min(len(p), len(t))
+            if n == 0:
+                continue
+            diffs.append((p[:n] - t[:n]) ** 2)
+        if not diffs:
+            return float("nan")
+        return float(np.sqrt(np.mean(np.concatenate(diffs))))
+
+    def plot_joint_dict_figure(true_dict, pred_dict, title: str, fname_suffix: str, pick_list=None):
+        if pick_list is None:
+            pick_list = JOINT_PICK
+        rmse = _rollout_rmse(
+            [true_dict[j] for j in pick_list],
+            [pred_dict[j] for j in pick_list],
         )
-        if len(JOINT_PICK) == 1:
+        fig_j, axes_j = plt.subplots(
+            len(pick_list), 1, figsize=(20, 5 * len(pick_list)), sharex=True
+        )
+        if len(pick_list) == 1:
             axes_j = [axes_j]
-        for ax, j in zip(axes_j, JOINT_PICK):
+        for ax, j in zip(axes_j, pick_list):
             ax.plot(time_steps, true_dict[j], label="true", color=c_true, linewidth=lw)
             ax.plot(time_steps, pred_dict[j], label="pred", linestyle=":", color=c_pred, linewidth=lw)
             ax.set_ylabel(f"joint {j}")
             mark_history(ax)
         axes_j[-1].set_xlabel("time step (1-based)")
-        fig_j.suptitle(title)
+        fig_j.suptitle(f"{title}  |  rollout RMSE (norm) = {rmse:.5f}")
         fig_j.tight_layout()
         save_plot_figure(fig_j, model_dir_name, f"{model_name}_{fname_suffix}")
         plt.show()
+        return rmse
 
-    fig_lin, axes_lin = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
+    metrics = {}
+
     lin_true = [lin_vel_x, lin_vel_y, lin_vel_z]
     lin_pred = [lin_vel_x_pred, lin_vel_y_pred, lin_vel_z_pred]
+    rmse_lin = _rollout_rmse(lin_true, lin_pred)
+    metrics["base_lin_vel_rmse"] = rmse_lin
+    fig_lin, axes_lin = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
     labels_lin = ["base_lin_vel_x", "base_lin_vel_y", "base_lin_vel_z"]
     for k, ax in enumerate(axes_lin):
         ax.plot(time_steps, lin_true[k], label="true", color=c_true, linewidth=lw)
@@ -223,14 +254,16 @@ def plot_graphs(
         ax.set_ylabel(labels_lin[k])
         mark_history(ax)
     axes_lin[-1].set_xlabel("time step (1-based)")
-    fig_lin.suptitle("Base linear velocity")
+    fig_lin.suptitle(f"Base linear velocity  |  rollout RMSE (norm) = {rmse_lin:.5f}")
     fig_lin.tight_layout()
     save_plot_figure(fig_lin, model_dir_name, f"{model_name}_base_lin_vel")
     plt.show()
 
-    fig_ang, axes_ang = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
     ang_true = [ang_vel_x, ang_vel_y, ang_vel_z]
     ang_pred = [ang_vel_x_pred, ang_vel_y_pred, ang_vel_z_pred]
+    rmse_ang = _rollout_rmse(ang_true, ang_pred)
+    metrics["base_ang_vel_rmse"] = rmse_ang
+    fig_ang, axes_ang = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
     labels_ang = ["base_ang_vel_x", "base_ang_vel_y", "base_ang_vel_z"]
     for k, ax in enumerate(axes_ang):
         ax.plot(time_steps, ang_true[k], label="true", color=c_true, linewidth=lw)
@@ -238,11 +271,16 @@ def plot_graphs(
         ax.set_ylabel(labels_ang[k])
         mark_history(ax)
     axes_ang[-1].set_xlabel("time step (1-based)")
-    fig_ang.suptitle("Base angular velocity")
+    fig_ang.suptitle(f"Base angular velocity  |  rollout RMSE (norm) = {rmse_ang:.5f}")
     fig_ang.tight_layout()
     save_plot_figure(fig_ang, model_dir_name, f"{model_name}_base_ang_vel")
     plt.show()
 
+    rmse_joints = _rollout_rmse(
+        [true_joints[j] for j in JOINT_PICK],
+        [pred_joints[j] for j in JOINT_PICK],
+    )
+    metrics["joint_pos_rmse"] = rmse_joints
     fig_j, axes_j = plt.subplots(len(JOINT_PICK), 1, figsize=(20, 5 * len(JOINT_PICK)), sharex=True)
     if len(JOINT_PICK) == 1:
         axes_j = [axes_j]
@@ -252,7 +290,7 @@ def plot_graphs(
         ax.set_ylabel(f"joint {j}")
         mark_history(ax)
     axes_j[-1].set_xlabel("time step (1-based)")
-    fig_j.suptitle("Joint positions (subset)")
+    fig_j.suptitle(f"Joint positions (subset)  |  rollout RMSE (norm) = {rmse_joints:.5f}")
     fig_j.tight_layout()
     save_plot_figure(fig_j, model_dir_name, f"{model_name}_joints")
     plt.show()
@@ -260,9 +298,11 @@ def plot_graphs(
     if proj_grav_true is not None and proj_grav_pred is not None:
         gx_t, gy_t, gz_t = proj_grav_true
         gx_p, gy_p, gz_p = proj_grav_pred
-        fig_g, axes_g = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
         grav_true = [gx_t, gy_t, gz_t]
         grav_pred = [gx_p, gy_p, gz_p]
+        mse_grav = _rollout_rmse(grav_true, grav_pred)
+        metrics["proj_gravity_rmse"] = mse_grav
+        fig_g, axes_g = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
         labels_g = ["proj_gravity_x", "proj_gravity_y", "proj_gravity_z"]
         for k, ax in enumerate(axes_g):
             ax.plot(time_steps, grav_true[k], label="true", color=c_true, linewidth=lw)
@@ -270,20 +310,42 @@ def plot_graphs(
             ax.set_ylabel(labels_g[k])
             mark_history(ax)
         axes_g[-1].set_xlabel("time step (1-based)")
-        fig_g.suptitle("Projected gravity (body frame)")
+        fig_g.suptitle(f"Projected gravity (body frame)  |  rollout RMSE (norm) = {mse_grav:.5f}")
         fig_g.tight_layout()
         save_plot_figure(fig_g, model_dir_name, f"{model_name}_proj_gravity")
         plt.show()
 
     if true_joint_vel is not None and pred_joint_vel is not None:
-        plot_joint_dict_figure(
+        metrics["joint_vel_rmse"] = plot_joint_dict_figure(
             true_joint_vel, pred_joint_vel, "Joint velocities (subset)", "joint_vel"
         )
 
     if true_joint_tau is not None and pred_joint_tau is not None:
-        plot_joint_dict_figure(
+        metrics["joint_tau_rmse"] = plot_joint_dict_figure(
             true_joint_tau, pred_joint_tau, "Joint torques (subset)", "joint_torques"
         )
+
+    if true_contacts is not None and pred_contacts is not None:
+        # Pick a few body contacts to plot
+        BODY_CONTACT_PICK = [0, 8, 14] if not_all_joints else list(range(26))
+        metrics["contact_rmse"] = plot_joint_dict_figure(
+            true_contacts, pred_contacts, "Body Contacts (subset)", "body_contacts", pick_list=BODY_CONTACT_PICK
+        )
+        
+        # Explicitly plot the foot contacts / forces (last 4 indices)
+        FOOT_CONTACT_PICK = [26, 27, 28, 29]
+        metrics["foot_contact_rmse"] = plot_joint_dict_figure(
+            true_contacts, pred_contacts, "Foot Contacts & Forces", "foot_contacts", pick_list=FOOT_CONTACT_PICK
+        )
+
+    _, plots_dir, _ = create_runs_dir(model_dir_name)
+    metrics_path = os.path.join(plots_dir, f"{model_name}_metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Saved metrics: {metrics_path}")
+    print("Rollout RRMSE (physical space):")
+    for k, v in metrics.items():
+        print(f"  {k}: {v:.6f}")
 
 
 def z_norm(state_action_pair, mean, std):
@@ -398,3 +460,21 @@ def minmax_norm_state_action_pair(
 
 
     
+
+def CreateGruWMInstance(config):
+    world_model = RandomWorldStepGru(
+        batch_size=config['world_model_training_params']['batch_size'],
+        state_dim=config['robot_params']['state_dims'],
+        contact_dim=config['robot_params']['contact_dims'],
+        action_dim=config['robot_params']['action_dims'],
+        embed_dim=config['world_model_arch_params']['embed_dim'],
+        hidden_dim=config['world_model_arch_params']['gru_hidden_dim'],
+        num_gru_layers=config['world_model_arch_params']['num_gru_layers'],
+        mlp_dim=config['world_model_arch_params']['mlp_head_dim'],
+        lr=config['world_model_training_params']['learning_rate'],
+        weight_decay=config['world_model_training_params']['weight_decay'],
+        device=config['device'],
+        std_range=config['world_model_arch_params'].get('std_range', (0.03, 5)),
+        std_init=config['world_model_arch_params'].get('std_init', 0.4)
+    )
+    return world_model

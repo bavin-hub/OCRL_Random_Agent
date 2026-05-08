@@ -1,29 +1,37 @@
 {
     "device": "mps",
     "world_model_training_params": {
-        "epochs": 500,
+        "epochs": 50,
         "batch_size": 1024,
         "N": 8,
         "M": 32,
         "learning_rate": 0.001,
-        "weight_decay": 1e-5,
+        "weight_decay": 1e-05,
         "forecast_decay": 1.0,
         "step_time_seconds": 0.02,
         "N_pred": 120
     },
     "world_model_arch_params": {
-        "embed_dim": 64,
+        "embed_dim": 256,
         "mlp_dim": 128,
         "num_heads": 4,
         "num_layers": 1,
-        "lr": 1e-3
+        "lr": 0.001,
+        "gru_hidden_dim": 256,
+        "num_gru_layers": 2,
+        "mlp_head_dim": 128,
+        "std_range": [
+            0.03,
+            5
+        ],
+        "std_init": 0.4
     },
     "world_model_arch_params_mlp": {
         "hidden_dim": 256,
         "num_layers": 2,
         "mlp_head_dim": 128,
         "with_uncertainty": false,
-        "lr": 1e-3
+        "lr": 0.001
     },
     "policy_arch_params": {
         "policy": {

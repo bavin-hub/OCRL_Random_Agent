@@ -90,6 +90,11 @@ class TransWM(nn.Module):
             nn.ReLU(),
             nn.Linear(mlp_dim, state_dim),
         )
+        self.contact_mlp = nn.Sequential(
+            nn.Linear(embed_dim, mlp_dim),
+            nn.ReLU(),
+            nn.Linear(mlp_dim, 30),
+        )
 
         self.logstd_range = (float(np.log(std_range[0])), float(np.log(std_range[1])))
 
@@ -118,6 +123,7 @@ class TransWM(nn.Module):
 
         h = self.encode(st, at)
         mu_t_next = self.mean_mlp(h)
+        contact_pred = self.contact_mlp(h)
         if x_prev is not None:
             mu_t_next = mu_t_next + x_prev
 
@@ -125,11 +131,11 @@ class TransWM(nn.Module):
         std = logstd_t.exp()
 
         if sample:
-            return mu_t_next, std
+            return mu_t_next, contact_pred, std
 
         eps = torch.randn_like(mu_t_next, device=st.device)
         st_next = mu_t_next + eps * std
-        return st_next, std
+        return st_next, contact_pred, std
 
     def gnll_loss(self, state_mean: torch.Tensor, state_std: torch.Tensor, state_target: torch.Tensor):
         return self.state_discrepancy(state_mean, state_target, state_std**2)
@@ -146,6 +152,7 @@ class MlpWM(nn.Module):
         self,
         state_dim: int,
         action_dim: int,
+        contact_dim: int = 30,
         hidden_dim: int = 256,
         num_layers: int = 2,
         mlp_head_dim: int = 128,
@@ -153,7 +160,7 @@ class MlpWM(nn.Module):
         lr: float = 1e-3,
         weight_decay: float = 0.0,
         device: str = "cpu",
-        std_range: Tuple[float, float] = (0.01, 0.06),
+        std_range: Tuple[float, float] = (0.03, 0.5),
     ):
         super().__init__()
         assert num_layers >= 1
@@ -180,6 +187,11 @@ class MlpWM(nn.Module):
             nn.ReLU(),
             nn.Linear(mlp_head_dim, state_dim),
         )
+        self.contact_head = nn.Sequential(
+            nn.Linear(hidden_dim, mlp_head_dim),
+            nn.ReLU(),
+            nn.Linear(mlp_head_dim, contact_dim),
+        )
 
         if with_uncertainty:
             self.logstd_head = nn.Sequential(
@@ -201,14 +213,15 @@ class MlpWM(nn.Module):
     ):
         h = self.backbone(torch.cat([s_t, a_t], dim=-1))
         mu = self.mean_head(h)
+        contact = self.contact_head(h)
         if x_prev is not None:
             mu = mu + x_prev
 
         if self.with_uncertainty:
             logstd = self.logstd_head(h).clamp(*self.logstd_range)
             std = logstd.exp()
-            return mu, std
-        return mu
+            return mu, contact, std
+        return mu, contact
 
     def mse_loss(self, st_pred: torch.Tensor, st_true: torch.Tensor):
         return torch.sum((st_pred - st_true) ** 2, dim=-1).mean()
@@ -229,11 +242,11 @@ if __name__ == "__main__":
         device="cpu",
     )
     st, at = torch.randn(B, S), torch.randn(B, A)
-    out, std = m(st, at, predict=True, sample=False, x_prev=st)
+    out, contact, std = m(st, at, predict=True, sample=False, x_prev=st)
     assert out.shape == (B, S) and std.shape == (B, S)
     print("TransWM smoke OK:", out.shape, std.shape)
 
     mlp = MlpWM(state_dim=S, action_dim=A, hidden_dim=64, num_layers=2, mlp_head_dim=32, device="cpu")
-    mu = mlp(st, at, x_prev=st)
+    mu, contact = mlp(st, at, x_prev=st)
     assert mu.shape == (B, S)
     print("MlpWM smoke OK:", mu.shape, "params:", sum(p.numel() for p in mlp.parameters()))

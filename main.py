@@ -22,6 +22,22 @@ parser.add_argument(
     default=None,
     help='Rollout horizon for autoregressive WM training. N=1 reduces to one-step teacher forcing. Overrides config.',
 )
+parser.add_argument(
+    '--eval_db_dir_name',
+    default=None,
+    help="Subfolder under data/ containing eval rollout .db files. Defaults to db_dir_name + '_eval'.",
+)
+parser.add_argument(
+    '--eval_seed',
+    type=int,
+    default=42,
+    help="RNG seed for deterministic trajectory selection during eval (default 42). Use the same value for eval_mlp.py to compare on identical data.",
+)
+parser.add_argument(
+    '--wm-checkpoint',
+    default=None,
+    help="Full path to a .pth checkpoint file for eval. Supports tab-completion. Replaces --model_dir_name and --model_name.",
+)
 
 
 
@@ -108,8 +124,8 @@ def run(args):
     
     # check if model dir name is passed
     if args.run_mode == "eval": 
-        if args.model_dir_name == "" or args.model_name == "":
-            raise ValueError("model dir/name is empty")
+        if not args.wm_checkpoint and (args.model_dir_name == "" or args.model_name == ""):
+            raise ValueError("model dir/name is empty. Use --wm-checkpoint <path> or --model_dir_name + --model_name.")
 
     config['model_dir_name'] = args.model_dir_name
     config["model_name"] = args.model_name
@@ -119,13 +135,19 @@ def run(args):
             raise ValueError(f"--N must be >= 1, got {args.N}")
         config["world_model_training_params"]["N"] = args.N
 
-    # Accept: "pretraining_rollouts", "data/pretraining_rollouts", or absolute path.
-    if os.path.isabs(args.db_dir_name):
-        db_base = args.db_dir_name
-    elif args.db_dir_name.startswith('data' + os.sep) or args.db_dir_name == 'data':
-        db_base = os.path.join(os.getcwd(), args.db_dir_name)
+    if args.run_mode == 'eval':
+        target_db_dir = args.eval_db_dir_name if args.eval_db_dir_name else args.db_dir_name + "_eval"
     else:
-        db_base = os.path.join(os.getcwd(), 'data', args.db_dir_name)
+        target_db_dir = args.db_dir_name
+
+    # Accept: "pretraining_rollouts", "data/pretraining_rollouts", or absolute path.
+    if os.path.isabs(target_db_dir):
+        db_base = target_db_dir
+    elif target_db_dir.startswith('data' + os.sep) or target_db_dir == 'data':
+        db_base = os.path.join(os.getcwd(), target_db_dir)
+    else:
+        db_base = os.path.join(os.getcwd(), 'data', target_db_dir)
+        
     if not os.path.isdir(db_base):
         raise FileNotFoundError(f"Database directory not found: {db_base}")
     db_paths = sorted(
@@ -138,14 +160,27 @@ def run(args):
         raise FileNotFoundError(f"No .db files in {db_base}")
     
     # create combined trajectories
-    combine_trajectories(args.db_dir_name)
+    combine_trajectories(target_db_dir)
     print("Created combined transitions db")
 
     config['db_base_dir'] = os.path.abspath(db_base)
     config['db_paths'] = [os.path.abspath(p) for p in db_paths]
     config['db_path'] = config['db_paths'][0]
-    config['combined_db_path'] = os.path.join(os.getcwd(), f"data/{args.db_dir_name}/combined_transitions.db")
+    config['combined_db_path'] = os.path.join(os.getcwd(), f"data/{target_db_dir}/combined_transitions.db")
     config["run_mode"] = args.run_mode
+    config["eval_seed"] = args.eval_seed
+
+    # If --wm-checkpoint is given, derive model_name and model_dir_name from the path
+    if args.wm_checkpoint:
+        ckpt_path = os.path.abspath(args.wm_checkpoint)
+        if not os.path.isfile(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+        config["wm_checkpoint"] = ckpt_path
+        config["model_name"] = os.path.basename(ckpt_path)
+        config["model_dir_name"] = os.path.basename(os.path.dirname(ckpt_path))
+    else:
+        config["wm_checkpoint"] = None
+
     agent = Agent(config)
 
 
