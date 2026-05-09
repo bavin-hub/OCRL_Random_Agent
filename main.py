@@ -171,13 +171,16 @@ def run(args):
     config["eval_seed"] = args.eval_seed
 
     # If --wm-checkpoint is given, derive model_name and model_dir_name from the path
+    # (but respect explicitly-passed --model_name / --model_dir_name for plot naming)
     if args.wm_checkpoint:
         ckpt_path = os.path.abspath(args.wm_checkpoint)
         if not os.path.isfile(ckpt_path):
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
         config["wm_checkpoint"] = ckpt_path
-        config["model_name"] = os.path.basename(ckpt_path)
-        config["model_dir_name"] = os.path.basename(os.path.dirname(ckpt_path))
+        if not args.model_name:
+            config["model_name"] = os.path.basename(ckpt_path)
+        if not args.model_dir_name:
+            config["model_dir_name"] = os.path.basename(os.path.dirname(ckpt_path))
     else:
         config["wm_checkpoint"] = None
 

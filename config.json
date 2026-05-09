@@ -1,7 +1,7 @@
 {
     "device": "mps",
     "world_model_training_params": {
-        "epochs": 50,
+        "epochs": 500,
         "batch_size": 1024,
         "N": 8,
         "M": 32,
