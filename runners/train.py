@@ -130,12 +130,12 @@ class Trainer:
             print(f'end of epoch {epoch}\n\n')
             
             # save model
-            if epoch % self.config["model_save_freq"] == 0:
+            if epoch % self.config["model_save_freq"] == 0 or epoch == 1:
                 model_name = f'{model_type}-epoch_{epoch}.pth'
                 SaveModel(world_model, model_name, model_dir_name)
 
             # save checkpoint
-            if epoch % self.config["ckpt_save_freq"] == 0:
+            if epoch % self.config["ckpt_save_freq"] == 0 or epoch == 1:
                 model_name = f"{model_type}-ckpt-epoch_{epoch}.pth"
                 SaveCkpt(world_model, model_name, model_dir_name, epoch, epoch_loss)
 

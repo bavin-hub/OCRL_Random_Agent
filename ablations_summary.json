@@ -1,36 +1,7 @@
 [
   {
+    "model_type": "wm_gru",
     "N": 1,
-    "tag": "wm_mlp_ablation_N1",
-    "ckpt": "checkpoints/wm_mlp/wm_mlp_2026-05-08_12:35:07/wm_mlp-ckpt-epoch_500.pth",
-    "run_dir": "checkpoints/wm_mlp/wm_mlp_2026-05-08_12:35:07",
-    "metrics": {
-      "base_lin_vel_rmse": 0.2818016131412537,
-      "base_ang_vel_rmse": 0.33561063670076174,
-      "joint_pos_rmse": 0.037289170269042896,
-      "proj_gravity_rmse": 0.016023997996836608,
-      "joint_vel_rmse": 0.4220105771385938,
-      "joint_tau_rmse": 2.0700705593727844,
-      "contact_rmse": 0.042794086527116235,
-      "foot_contact_rmse": 0.0927796709518413
-    },
-    "wall_time_s": 2593.2347021102905
-  },
-  {
-    "N": 8,
-    "tag": "wm_mlp_ablation_N8",
-    "ckpt": "checkpoints/wm_mlp/wm_mlp_2026-05-08_13:18:41/wm_mlp-ckpt-epoch_500.pth",
-    "run_dir": "checkpoints/wm_mlp/wm_mlp_2026-05-08_13:18:41",
-    "metrics": {
-      "base_lin_vel_rmse": 0.08452423381292024,
-      "base_ang_vel_rmse": 0.0955310162691284,
-      "joint_pos_rmse": 0.009701677848783674,
-      "proj_gravity_rmse": 0.013676607066869505,
-      "joint_vel_rmse": 0.03749424580482895,
-      "joint_tau_rmse": 0.4349482364558245,
-      "contact_rmse": 0.011170580824973164,
-      "foot_contact_rmse": 0.012183249366394805
-    },
-    "wall_time_s": 5761.809067964554
+    "tag": "wm_gru_ablation_N1"
   }
 ]
