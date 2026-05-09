@@ -7,7 +7,9 @@ from utils import SaveModel, CreateWorlModelInstance, get_model_name,\
                   count_parameters, SaveCkpt, LoadCkpt
 import time
 from storage.replay_buffer import ReplayBuffer
-from utils import z_norm, minmax_norm_state_action_pair
+from utils import z_norm, minmax_norm_state_action_pair, denormalize, denormalize_z_norm
+from runners.imagination import Imagination
+
 
 STATE_ACTION_SPLIT = 96
 
@@ -43,9 +45,12 @@ def plot_on_the_fly_batch_x(x):
 
 
 # only state-action pair
-class Trainer:
+class Trainer(Imagination):
 
     def __init__(self, config: dict):
+
+        self.consts = self.setup_reward_constants("cuda")
+
         self.config = config
         # self.data_loader = load_dataset(db_path=self.config["db_path"])
 
@@ -69,6 +74,13 @@ class Trainer:
                                           device=self.config["device"]) 
         
         self._initialized_ = None
+        self.imagination_ht = None
+        self._last_imagination_state_hist = None
+        self._last_imagination_action_hist = None
+        self._last_imagination_st_next_pred = None
+        self._last_imagination_at = None
+        self.wm_initialized = None
+        self.extras = dict()
 
     def get_model_params(self, model):
         num_model_params = 0
@@ -80,6 +92,9 @@ class Trainer:
     def scale_policy_actions(self, policy_actions):
         return (policy_actions*self.scale) + self.offset
 
+    def descale(self, scaled_actions):
+        return (scaled_actions - self.offset) / self.scale
+
     def insert_into_replay_buffer(self, state_, torques, action, termination):
         # obs -> combine state and torques
         # scale the raw policy actions
@@ -87,13 +102,14 @@ class Trainer:
         # obs = torch.cat((state_[..., :67], torques), dim=-1)
         obs = state_
         action = self.scale_policy_actions(action)
-        # obs_norm, action_norm = z_norm(obs, action, self.state_mean, self.state_std, self.action_mean, self.action_std)
-        state_action_pair = torch.concat([obs, action], dim=-1)
-        obs_norm, action_norm = minmax_norm_state_action_pair(state_action_pair, 
-                                                              self.jmin,
-                                                              self.jmax,
-                                                              self.tau_min,
-                                                              self.tau_max)
+        obs_norm, action_norm = z_norm(obs, action, self.state_mean, self.state_std, self.action_mean, self.action_std)
+        
+        # state_action_pair = torch.concat([obs, action], dim=-1)
+        # obs_norm, action_norm = minmax_norm_state_action_pair(state_action_pair, 
+        #                                                       self.jmin,
+        #                                                       self.jmax,
+        #                                                       self.tau_min,
+        #                                                       self.tau_max)
         
         # print("\n\n")
         
@@ -104,7 +120,7 @@ class Trainer:
 
 
     def on_the_fly_update(self, itr):
-        print("inside on the fly update")
+        # print("inside on the fly update")
         if self._initialized_ is None:
             # params
             self.M, self.N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
@@ -115,11 +131,13 @@ class Trainer:
             self.total_epochs = self.config['world_model_training_params']['epochs']
             self.total_grad_steps = self.num_mini_batches * self.total_epochs 
 
-            # create model instance
-            self.world_model = CreateWorlModelInstance(self.config)
-            self.world_model.train()
-            print('World Model instantiated\n\n\n')
-            count_parameters(self.world_model)
+            if self.wm_initialized is None:
+                # create model instance
+                self.world_model = CreateWorlModelInstance(self.config)
+                self.world_model.train()
+                print('World Model instantiated\n\n\n')
+                count_parameters(self.world_model)
+                self.wm_initialized = True
 
             # model dir 
             model_type = "wm_gru"
@@ -193,6 +211,12 @@ class Trainer:
             SaveModel(self.world_model, model_name, self.model_dir_name)
 
 
+        # save checkpoint
+        if itr% self.config["ckpt_save_freq"] == 0:
+            model_name = f"wm-itr-ckpt-epoch_{itr}.pth"
+            SaveCkpt(self.world_model, model_name, self.model_dir_name, itr, epoch_loss)
+
+
 
 
     def rnn_rollout_steps(self, x):
@@ -215,20 +239,20 @@ class Trainer:
                 if t == self.M-1:
                     x_prev = torch.unsqueeze(x[:, t, :96], dim=1)
                     # std_logits, state_mean
-                    st_next_pred, ht, std_logits, state_mean = self.world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
+                    st_next_pred, ht = self.world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
                 else:
-                    st_next_pred, ht, std_logits, state_mean = self.world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -self.action_dims:], dim=1)), dim=2), 
+                    st_next_pred, ht = self.world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -self.action_dims:], dim=1)), dim=2), 
                                                                             ht, predict=True, x_prev=st_next_pred)
                 target = torch.unsqueeze(x[:, t+1, :self.state_dims], dim=1)
                 # loss_t = world_model.nll_loss(dist, target)
                 # print(st_next_pred.shape)
                 # print(target.shape)
                 # print("\n")
-                # loss_t = self.world_model.mse_loss(st_pred=torch.squeeze(st_next_pred, dim=1),
-                #                                   st_true=torch.squeeze(target, dim=1))
-                loss_t = self.world_model.gnll_loss(state_mean=state_mean,
-                                               state_std=std_logits,
-                                               state_target=target)
+                loss_t = self.world_model.mse_loss(st_pred=torch.squeeze(st_next_pred, dim=1),
+                                                  st_true=torch.squeeze(target, dim=1))
+                # loss_t = self.world_model.gnll_loss(state_mean=state_mean,
+                #                                state_std=std_logits,
+                #                                state_target=target)
                 batch_loss += alpha * loss_t
                 alpha *= self.decay
 
@@ -243,118 +267,296 @@ class Trainer:
         self.grad_step += 1
 
         return batch_loss
+    
 
-
-    # def update(self, model_type, load_dataset):
+    def load_model(self, ckpt_name, ckpt_dir):
+    
         
-    #     # get data loader obj
-    #     wt = self.config['world_model_training_params']
-    #     db_paths = self.config.get('db_paths') or [self.config['db_path']]
-    #     self.data_loader = load_dataset(
-    #         db_paths=db_paths,
-    #         batch_size=wt['batch_size'],
-    #         M=wt['M'],
-    #         N=wt['N'],
-    #         combined_db_path=self.config.get("combined_db_path"),
-    #         run_mode=self.config.get("run_mode"),
-    #         mean=self.config.get("mean_state_action"),
-    #         std=self.config.get("std_state_action")
-    #     )
+        self.M, self.N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
+        self.decay = self.config['world_model_training_params']['forecast_decay']
+        self.state_dims = self.config['robot_params']['state_dims']
+        self.action_dims = self.config['robot_params']['action_dims']
+        self.num_mini_batches = self.config["world_model_training_params"]["num_mini_batches"]
+        self.total_epochs = self.config['world_model_training_params']['epochs']
+        self.total_grad_steps = self.num_mini_batches * self.total_epochs 
 
-    #     # create model instance
-    #     M, N = self.config['world_model_training_params']['M'], self.config['world_model_training_params']['N']
-    #     decay = self.config['world_model_training_params']['forecast_decay']
-    #     state_dims = self.config['robot_params']['state_dims']
-    #     action_dims = self.config['robot_params']['action_dims']
-    #     world_model = CreateWorlModelInstance(self.config)
-    #     world_model.train()
-    #     print('World Model instantiated')
-    #     # self.get_model_params(world_model)
-    #     count_parameters(world_model)
-    #     training_loss = []
-    #     # model dir 
-    #     model_dir_name = get_model_name(model_type)
-    #     print('this is the model name : ', model_dir_name)
+        # create model instance
+        self.world_model = CreateWorlModelInstance(self.config)
+
+        self.world_model = LoadCkpt(self.world_model,
+                                   ckpt_name,
+                                   ckpt_dir) 
+        self.world_model.train()
+        self.wm_initialized = True
+    
+    def _cache_imagination_last_outputs(self, state_hist, action_hist, st_next_pred, at):
+        self._last_imagination_state_hist = state_hist
+        self._last_imagination_action_hist = action_hist
+        self._last_imagination_st_next_pred = st_next_pred
+        self._last_imagination_at = at
+
+    def _rollout_imagination_prefix(self, state_history, action_history, ht):
+        """Run GRU burn-in + one predict step. Mutates nothing on ``self`` except via ``forward``."""
+        x = torch.concat([state_history, action_history], dim=-1)
+        seq_len = x.shape[1]
+        if seq_len > 1:
+            for t in range(seq_len):
+                if t < seq_len - 1:
+                    ht = self.world_model.forward(
+                        torch.unsqueeze(x[:, t, :], dim=1),
+                        ht,
+                        predict=False,
+                    )
+                else:
+                    x_prev = torch.unsqueeze(x[:, t, :96], dim=1)
+                    st_mean_pred, ht = self.world_model.forward(
+                        torch.unsqueeze(x[:, t, :], dim=1),
+                        ht,
+                        predict=True,
+                        x_prev=x_prev,
+                        sample=True,
+                    )
+                    last_action = torch.unsqueeze(x[:, -1, 96:], dim=1)
+                    state_hist = torch.unsqueeze(state_history[:, -1, :], dim=1)
+                    action_hist = torch.unsqueeze(action_history[:, -1, :], dim=1)
+                    return state_hist, action_hist, st_mean_pred, last_action, ht
+        else:
+            x_prev = torch.unsqueeze(x[:, -1, :96], dim=1)
+            st_mean_pred, ht = self.world_model.forward(
+                torch.unsqueeze(x[:, -1, :], dim=1),
+                ht,
+                predict=True,
+                x_prev=x_prev,
+                sample=True,
+            )
+            last_action = torch.unsqueeze(x[:, -1, 96:], dim=1)
+            return state_history, action_history, st_mean_pred, last_action, ht
+
+    def dynamics_step(self, state_history, action_history, imagine=False):
+
+        num_envs = state_history.shape[0]
+        if self.imagination_ht is None or self.imagination_ht.shape[1] != num_envs:
+            self.imagination_ht = torch.zeros(
+                (
+                    self.config["world_model_arch_params"]["num_gru_layers"],
+                    num_envs,
+                    self.config["world_model_arch_params"]["gru_hidden_dim"],
+                )
+            ).to(self.config["device"])
+
+        state_hist, action_hist, st_mean_pred, last_action, self.imagination_ht = self._rollout_imagination_prefix(
+            state_history, action_history, self.imagination_ht
+        )
+        self._cache_imagination_last_outputs(state_hist, action_hist, st_mean_pred, last_action)
+        return state_hist, action_hist, st_mean_pred, last_action
+
+    def reset(self, state_history, action_history, env_indices=None):
+
+        # self.dynamics_step(state_history[:, :self.config["M"]-1, :], 
+        #                    action_history[:, :self.config["M"]-1, :])
+        
+        if env_indices is None:
+            return self.dynamics_step(state_history, action_history)
+
+        idx = torch.as_tensor(env_indices, device=state_history.device)
+        if idx.dtype == torch.bool:
+            idx = torch.nonzero(idx, as_tuple=False).flatten()
+        else:
+            idx = idx.flatten().long()
+        idx = torch.unique(idx)
+
+        if idx.numel() == 0:
+            if self._last_imagination_st_next_pred is not None:
+                return (
+                    self._last_imagination_state_hist.clone(),
+                    self._last_imagination_action_hist.clone(),
+                    self._last_imagination_st_next_pred.clone(),
+                    self._last_imagination_at.clone(),
+                )
+            return self.dynamics_step(state_history, action_history)
+
+        if self._last_imagination_st_next_pred is None or self.imagination_ht is None:
+            return self.dynamics_step(state_history, action_history)
+
+        layers = self.config["world_model_arch_params"]["num_gru_layers"]
+        hidden = self.config["world_model_arch_params"]["gru_hidden_dim"]
+        ht_sub = torch.zeros(
+            (layers, idx.numel(), hidden),
+            device=self.imagination_ht.device,
+            dtype=self.imagination_ht.dtype,
+        )
+
+        sub_state = state_history.index_select(0, idx)
+        sub_action = action_history.index_select(0, idx)
+        sub_state_hist, sub_action_hist, sub_st, sub_at, ht_sub = self._rollout_imagination_prefix(
+            sub_state, sub_action, ht_sub
+        )
+
+        self.imagination_ht.index_copy_(1, idx.to(self.imagination_ht.device), ht_sub)
+
+        state_hist = self._last_imagination_state_hist.clone()
+        action_hist = self._last_imagination_action_hist.clone()
+        st_next_pred = self._last_imagination_st_next_pred.clone()
+        at = self._last_imagination_at.clone()
+        state_hist.index_copy_(0, idx, sub_state_hist)
+        action_hist.index_copy_(0, idx, sub_action_hist)
+        st_next_pred.index_copy_(0, idx, sub_st)
+        at.index_copy_(0, idx, sub_at)
+        self._cache_imagination_last_outputs(state_hist, action_hist, st_next_pred, at)
+        return state_hist, action_hist, st_next_pred, at
+
+    def process_imagined_obs(self, denormalized_obs, last_cmd_vels, denormalized_last_actions):
+        imagined_obs = torch.concat([denormalized_obs[:, :67], 
+                                     denormalized_last_actions, 
+                                     last_cmd_vels], dim=-1)
+        return imagined_obs
 
 
-    #     # load checkpoints
-    #     if self.config["use_ckpt"]:
-    #         world_model = LoadCkpt(world_model,
-    #                                self.config["ckpt_name"],
-    #                                self.config["ckpt_dir"]) 
+    def get_imagined_obs(self, state_history, action_history, last_cmd_vels):
+        x = torch.concat([state_history, action_history], dim=-1)
+        # seq_len = x.shape[1]
+        # num_envs = x.shape[0]
+
+        x_curr = torch.unsqueeze(x[:, -1, :96], dim=1)
+        st_pred, self.imagination_ht = self.world_model.forward(torch.unsqueeze(x[:, -1, :], dim=1),
+                                                                self.imagination_ht,
+                                                                predict=True,
+                                                                x_prev=x_curr,
+                                                                sample=True)
+        
+        # # denormalize predicted state and last-step normalized joint targets
+        last_action = torch.unsqueeze(x[:, -1, 96:], dim=1)
 
 
+        return st_pred, last_action
+    
 
-    #     ######################### Training Starts #########################
+    def preprocess_obs(self, st_next_pred, last_action, last_cmd_vels):
+        # denormalized_obs, last_actions_raw = denormalize(
+        #                                                 st_next_pred,
+        #                                                 self.jmin,
+        #                                                 self.jmax,
+        #                                                 self.tau_min,
+        #                                                 self.tau_max,
+        #                                                 last_action=last_action,
+        #                                             )
+        # print(st_next_pred.shape)
+        
+        denormalized_obs, last_actions_raw = denormalize_z_norm(st_next_pred,
+                                                                last_action,
+                                                                self.state_mean,
+                                                                self.state_std,
+                                                                self.action_mean,
+                                                                self.action_std)
+        # print(denormalized_obs.shape)
+        # descale the actions to match policy dist
+        last_actions_raw = self.descale(last_actions_raw)
 
-    #     # Iterate over epochs
-    #     for epoch in range(1, self.config['world_model_training_params']['epochs']+1):
-    #         print(f'start of epoch {epoch}')
-    #         # Iterate over batches
-    #         epoch_loss = 0.0
-    #         for step, batch_st_ct_at in enumerate(self.data_loader):
-    #             ht = torch.zeros((self.config['world_model_arch_params']['num_gru_layers'], 
-    #                               batch_st_ct_at.shape[0], 
-    #                               self.config['world_model_arch_params']['gru_hidden_dim'])).to(self.config['device'])
-                
-    #             x = batch_st_ct_at.to(self.config["device"]) # x -> (bs, M+N, s_dim+a_dim)
-    #             seq_len = x.shape[1]
-    #             batch_loss = 0
-    #             alpha = 1.0
-    #             # Iterate over RNN timestamps
-    #             for t in range(seq_len-1):
-    #                 loss_t = 0
-    #                 if t < M-1:
-    #                     ht = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), 
-    #                                              ht, predict=False) # torch.unsqueeze(x[:, t, :], dim=1) => (bs, s_dim+a_dim) -> (bs, 1, s_dim+a_dim)
-    #                 else:
-    #                     if t == M-1:
-    #                         x_prev = torch.unsqueeze(x[:, t, :96], dim=1)
-    #                         # std_logits, state_mean
-    #                         st_next_pred, ht = world_model.forward(torch.unsqueeze(x[:, t, :], dim=1), ht, predict=True, x_prev=x_prev)
-    #                     else:
-    #                         st_next_pred, ht = world_model.forward(torch.cat((st_next_pred, torch.unsqueeze(x[:, t, -action_dims:], dim=1)), dim=2), 
-    #                                                                              ht, predict=True, x_prev=st_next_pred)
-    #                     target = torch.unsqueeze(x[:, t+1, :state_dims], dim=1)
-    #                     # loss_t = world_model.nll_loss(dist, target)
-    #                     # print(st_next_pred.shape)
-    #                     # print(target.shape)
-    #                     # print("\n")
-    #                     loss_t = world_model.mse_loss(st_pred=torch.squeeze(st_next_pred, dim=1),
-    #                                                   st_true=torch.squeeze(target, dim=1))
-    #                     # loss_t = world_model.gnll_loss(state_mean=state_mean,
-    #                     #                                state_std=std_logits,
-    #                     #                                state_target=target)
-    #                     batch_loss += alpha * loss_t
-    #                     alpha *= decay
-                
-    #             batch_loss /= N
+        # print(last_action.shape)
 
-    #             # optimize
-    #             world_model.optimizer.zero_grad()
-    #             batch_loss.backward()
-    #             world_model.optimizer.step()
+        imagined_obs = self.process_imagined_obs(torch.squeeze(st_next_pred, dim=1),
+                                                 last_cmd_vels,
+                                                 torch.squeeze(last_action, dim=1))
+        
+        return imagined_obs, last_actions_raw
+        
 
-    #             epoch_loss += batch_loss
-    #             training_loss.append(batch_loss.item())
-    #             # print(f'Loss at step {step} : {batch_loss.item()}')
+    def imagination_step(self, st_prev, imagined_action_t, at_prev, last_cmd_vel,
+                                ep_len, max_ep_len, prev_state_hist):
+        
+        # scale the policy output actions
+        scaled_imagined_actions_t = self.scale_policy_actions(imagined_action_t)
+
+        scaled_imagined_actions_prev = self.scale_policy_actions(at_prev)
+
+        # normalize states and actions
+        # state_action_pair = torch.concat([torch.squeeze(st_prev, dim=1), scaled_imagined_actions_t], dim=-1)
+        # obs_norm, action_norm = minmax_norm_state_action_pair(state_action_pair, 
+        #                                                       self.jmin,
+        #                                                       self.jmax,
+        #                                                       self.tau_min,
+        #                                                       self.tau_max)
+        
+        obs_norm, action_norm = z_norm(st_prev, scaled_imagined_actions_t, self.state_mean, self.state_std, self.action_mean, self.action_std)
+
+        state_hist = st_prev
+        action_hist = torch.unsqueeze(action_norm, dim=1)
+
+        # do dynamics step
+        state_hist, action_hist, st_next_pred, at = self.dynamics_step(state_hist, action_hist)
+        
+        # # denormalize your st_next_pred 
+        # imagined_obs_t_next = denormalize(st_next_pred,
+        #                                   self.jmin,
+        #                                   self.jmax,
+        #                                   self.tau_min,
+        #                                   self.tau_max,)
+        
+        # # denormalize prev state 
+        # denormalized_prev_state = denormalize(torch.squeeze(prev_state_hist, dim=1),
+        #                                     self.jmin,
+        #                                     self.jmax,
+        #                                     self.tau_min,
+        #                                     self.tau_max,)
+        
+    
+
+        # compute rewards
+        # rewards = self.custom_rewards(last_cmd_vel, 
+        #                               torch.squeeze(prev_state_hist, dim=1), 
+        #                               torch.squeeze(st_next_pred, dim=1), 
+        #                               at_prev, 
+        #                               imagined_action_t,
+        #                               self.consts)
+
+        denormalized_obs, _ = denormalize_z_norm(st_next_pred,
+                                                at,
+                                                self.state_mean,
+                                                self.state_std,
+                                                self.action_mean,
+                                                self.action_std)
+
+        rewards = self.custom_rewards(last_cmd_vel, 
+                                      torch.squeeze(st_prev, dim=1), 
+                                      torch.squeeze(st_next_pred, dim=1), 
+                                      scaled_imagined_actions_prev, 
+                                      scaled_imagined_actions_t,
+                                      self.consts)
+
+        # compute dones
+        dones, timeouts = self.custom_dones(next_obs_td=torch.squeeze(st_next_pred, dim=1),
+                                            episode_lengths=ep_len,
+                                            max_episode_length=max_ep_len)
+        
 
 
-    #         print(f'end of epoch {epoch}\n\n')
-            
-    #         # save model
-    #         if epoch % self.config["model_save_freq"] == 0:
-    #             model_name = f'{model_type}-epoch_{epoch}.pth'
-    #             SaveModel(world_model, model_name, model_dir_name)
-
-    #         # save checkpoint
-    #         if epoch % self.config["ckpt_save_freq"] == 0:
-    #             model_name = f"{model_type}-ckpt-epoch_{epoch}.pth"
-    #             SaveCkpt(world_model, model_name, model_dir_name, epoch, epoch_loss)
-
+        imagined_obs_next, _ = self.preprocess_obs(st_next_pred,
+                                                  at,
+                                                  last_cmd_vel)
+        
 
         
-    #     ######################### Training Ends #########################
+        self.extras["time_outs"] = timeouts
+
+        return state_hist, action_hist, st_next_pred, at, imagined_obs_next, rewards, dones, self.extras
+
+
+    def get_warm_start_buffer(self,):
+        mini_batch_itr = self.replay_buffer.mini_batch_generator(32,
+                                                             1,
+                                                             self.config.get("NUM_ENVS"))
+        state_hist_batch, action_hist_batch = next(mini_batch_itr)[:2]
+        
+        return state_hist_batch, action_hist_batch
+    
+
+    def custom_step(self,  cmd_vels, obs_td, next_obs_td, last_actions, actions, episode_lengths, max_episode_length):
+
+        rewards = self.custom_rewards(cmd_vels, obs_td, next_obs_td, last_actions, actions, self.consts)
+        dones, timeouts = self.custom_dones(next_obs_td, episode_lengths, max_episode_length)
+        self.extras["time_outs"] = timeouts
+        return rewards, dones, self.extras
+
 
 
     

@@ -168,10 +168,20 @@ def main() -> None:
     tau_min = torch.tensor([-25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -25.0, -88.0, -88.0, -88.0, -88.0, -88.0, -139.0, -139.0, -139.0, -139.0, -5.0, -5.0, -5.0, -5.0, -50.0, -50.0, -50.0, -50.0, -50.0, -50.0]).to(config.get("device"))
     tau_max = torch.tensor([25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 88.0, 88.0, 88.0, 88.0, 88.0, 139.0, 139.0, 139.0, 139.0, 5.0, 5.0, 5.0, 5.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]).to(config.get("device"))
 
+
+    print(scale)
+    print(offset)
+    print(state_mean)
+    print(state_std)
+    print(action_mean)
+    print(action_std)
+    print("\n\n\n")
+
+
     # load world model
     world_model = CreateWorlModelInstance(config)
-    model_name = "wm-itr_1000.pth"
-    model_dir_name = "wm_gru_2026-05-03_20:48:22"
+    model_name = "wm-itr_2500.pth"
+    model_dir_name = "wm_gru_2026-05-08_21:58:14"
     world_model = LoadModel(world_model, model_name, model_dir_name)
     print("successfully loaded world model")
 
@@ -193,6 +203,8 @@ def main() -> None:
         f"viewer={args.viewer} render_mode={render_mode!r} num_envs={args.num_envs} actions={num_actions}"
     )
 
+    IMAGINATION = False
+
     try:
         if use_viewer:
             resolved = _resolve_viewer(args.viewer)
@@ -212,9 +224,10 @@ def main() -> None:
             obs_td = to_obs_tensordict(obs, device)
             ep_return = torch.zeros(args.num_envs, device=device)
             ep_len = torch.zeros(args.num_envs, device=device)
-
+            last_actions = torch.zeros(args.num_envs, 29).to(config.get("device"))
             with torch.inference_mode():
                 for step in range(args.steps):                
+                    ############### curr robot state ############### 
                     robot = env.unwrapped.scene["robot"]
                     base_lin_vel = robot.data.root_link_lin_vel_w.to(device)      # (num_envs, 3) world frame
                     base_ang_vel = robot.data.root_link_ang_vel_w.to(device)      # (num_envs, 3) world frame
@@ -222,16 +235,69 @@ def main() -> None:
                     joint_pos = robot.data.joint_pos.to(device)                   # (num_envs, num_joints)
                     joint_vel = robot.data.joint_vel.to(device)   
                     tau = robot.data.actuator_force.to(device)
-
                     robot_state = torch.concat([base_lin_vel, base_ang_vel, projected_gravity, joint_pos, joint_vel, tau], dim=-1)
+                    ############### curr robot state end ###############
+
+                    ############ norm the curr robot state ############
+                    # last_dummy_actions = obs_td["policy"][:, 67:96]
+                    cmd_vel = obs_td["policy"][:, -3:]
+                    normed_robot_state, _ = z_norm(robot_state, last_actions, 
+                                                state_mean, state_std,
+                                                action_mean, action_std)
+                    policy_input_obs = torch.concat([normed_robot_state[:, :67],
+                                                    last_actions,
+                                                    cmd_vel], dim=-1)
+                    obs_td["policy"] = policy_input_obs
+                    ############ norm the curr robot state end ############
+
+                    # if IMAGINATION:
+                    #     # modify the obs accordingly
+                    #     mjlab_obs = obs_td["policy"]
+                    #     last_action_dummy = mjlab_obs[:, 67:96]
+                    #     cmd_vels = mjlab_obs[:, 96:]
+                    #     robot_state_normed, _ = z_norm(robot_state, last_action_dummy, 
+                    #                                     state_mean, state_std,
+                    #                                     action_mean, action_std)
+                        
+                    #     wm_obs = torch.concat([robot_state_normed[:, :67],
+                    #                            last_action_dummy,
+                    #                            cmd_vels], dim=-1)
+                    #     obs_td["policy"] = wm_obs
+                        
 
                    
 
                     actions = policy(obs_td)
+                    last_actions = scale_policy_actions(actions, scale, offset)
+
                     next_obs, rewards, dones, _extras = env.step(actions)
                     next_obs = next_obs.to(device)
                     rewards = rewards.to(device).view(-1)
                     dones = dones.to(device).view(-1).float()
+
+                    ############### next robot state ############### 
+                    next_robot = env.unwrapped.scene["robot"]
+                    base_lin_vel = next_robot.data.root_link_lin_vel_w.to(device)      # (num_envs, 3) world frame
+                    base_ang_vel = next_robot.data.root_link_ang_vel_w.to(device)      # (num_envs, 3) world frame
+                    projected_gravity = next_robot.data.projected_gravity_b.to(device)  # (num_envs, 3) base frame
+                    joint_pos = next_robot.data.joint_pos.to(device)                   # (num_envs, num_joints)
+                    joint_vel = next_robot.data.joint_vel.to(device)   
+                    tau = next_robot.data.actuator_force.to(device)
+                    next_robot_state = torch.concat([base_lin_vel, base_ang_vel, projected_gravity, joint_pos, joint_vel, tau], dim=-1)
+                    ############### next robot state end ###############
+
+
+                    ############ norm the next robot state ############
+                    # last_dummy_actions = next_obs[:, 67:96]
+                    cmd_vel = next_obs["actor"][:, -3:]
+                    normed_robot_state, _ = z_norm(next_robot_state, last_actions, 
+                                                state_mean, state_std,
+                                                action_mean, action_std)
+                    policy_input_obs = torch.concat([normed_robot_state[:, :67],
+                                                    last_actions,
+                                                    cmd_vel], dim=-1)
+                    next_obs["actor"] = policy_input_obs
+                    ############ norm the next robot state end ############
                     
 
                     ############### pre-processing required for world model ###############
@@ -243,21 +309,21 @@ def main() -> None:
                         actions, scale.to(device), offset.to(device)
                     )
                     # normalize state and scaled actions using imported z_norm function (TODO)
-                    # obs_norm, action_norm = z_norm(
-                    #     robot_state,
-                    #     scaled_act,
-                    #     state_mean.to(device),
-                    #     state_std.to(device),
-                    #     action_mean.to(device),
-                    #     action_std.to(device),
-                    # )
-                    state_action_pair = torch.concat([robot_state, scaled_act], dim=-1)
-                    # print(state_action_pair)
-                    obs_norm, action_norm = minmax_norm_state_action_pair(state_action_pair, 
-                                                                          jmin,
-                                                                          jmax,
-                                                                          tau_min,
-                                                                          tau_max)
+                    obs_norm, action_norm = z_norm(
+                        robot_state,
+                        scaled_act,
+                        state_mean.to(device),
+                        state_std.to(device),
+                        action_mean.to(device),
+                        action_std.to(device),
+                    )
+                    
+                    # state_action_pair = torch.concat([robot_state, scaled_act], dim=-1)
+                    # obs_norm, action_norm = minmax_norm_state_action_pair(state_action_pair, 
+                    #                                                       jmin,
+                    #                                                       jmax,
+                    #                                                       tau_min,
+                    #                                                       tau_max)
                     # print(obs_norm.shape)
                     wm_transition_rows.append(
                         torch.cat([obs_norm[0], action_norm[0]], dim=-1).detach().cpu()
@@ -337,10 +403,10 @@ def main() -> None:
                 pred_joint_vel = {j: [] for j in JOINT_PICK}
                 pred_joint_tau = {j: [] for j in JOINT_PICK}
 
-                print("till here")
-                print(x.shape)
-                print(x)
-                print("\n\n")
+                # print("till here")
+                # print(x.shape)
+                # print(x)
+                # print("\n\n")
 
                 with torch.inference_mode():
                     for t in range(max_steps - 1):

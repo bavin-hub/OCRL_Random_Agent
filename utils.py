@@ -1,5 +1,6 @@
 # contains plot, save, load utils 
 import os, json
+from pathlib import Path
 import numpy as np
 import torch
 from models.world_model import RandomWorldStepGru
@@ -47,6 +48,9 @@ def create_runs_dir(model_dir_name):
     return models_dir, plots_dir, ckpts_dir
 
 
+def scale_policy_actions(actions, scale, offset):
+    return (actions*scale) + offset
+
 
 def SaveModel(model_obj, model_name, model_dir_name):
     save_dir, _, _ = create_runs_dir(model_dir_name)
@@ -65,6 +69,32 @@ def LoadModel(model_obj, model_name, model_dir_name):
     print("Model Loaded")
     print("#########\n")
     return model_obj
+
+
+def load_ppo_policy_from_checkpoint(
+    algo,
+    checkpoint_path,
+    *,
+    load_optimizer: bool = True,
+    strict: bool = True,
+):
+
+    p = Path(checkpoint_path)
+    if not p.is_file():
+        p = Path(os.getcwd()) / checkpoint_path
+    if not p.is_file():
+        raise FileNotFoundError(f"Policy checkpoint not found: {checkpoint_path}")
+
+    loaded = torch.load(str(p), map_location="cpu", weights_only=False)
+    load_cfg = {
+        "actor": True,
+        "critic": True,
+        "optimizer": load_optimizer,
+        "iteration": False,
+        "rnd": True,
+    }
+    algo.load(loaded, load_cfg, strict=strict)
+    return loaded.get("iter")
 
 
 def SaveCkpt(model_obj, model_name, model_dir_name, current_epoch, current_loss):
@@ -274,6 +304,80 @@ def z_norm(state, action, state_mean, state_std, action_mean, action_std):
     return state_norm, action_norm
 
 
+def denormalize_z_norm(state_norm, action_norm, state_mean, state_std, action_mean, action_std):
+    """Inverse of ``z_norm``: recover state and action from z-normalized tensors.
+
+    Matches ``denormalize`` conventions: NumPy in → NumPy out on CPU; torch tensors keep
+    device/dtype (promoting ``action_norm`` to match ``state_norm``). If a tensor has rank 3
+    and ``shape[1] == 1``, the singleton middle axis is squeezed (same as ``denormalize`` /
+    ``last_action`` handling).
+    """
+    eps = 1e-5
+    return_numpy = isinstance(state_norm, np.ndarray)
+    if return_numpy:
+        if not isinstance(action_norm, np.ndarray):
+            raise TypeError(
+                "denormalize_z_norm: state_norm is ndarray but action_norm is not; "
+                "use matching types."
+            )
+        s_n = torch.from_numpy(np.asarray(state_norm, dtype=np.float64))
+        a_n = torch.from_numpy(np.asarray(action_norm, dtype=np.float64))
+    else:
+        if torch.is_tensor(state_norm):
+            s_n = state_norm
+        else:
+            s_n = torch.as_tensor(state_norm)
+        if not torch.is_floating_point(s_n):
+            s_n = s_n.float()
+        if torch.is_tensor(action_norm):
+            a_n = action_norm
+        else:
+            a_n = torch.as_tensor(action_norm)
+        if not torch.is_floating_point(a_n):
+            a_n = a_n.float()
+
+    device = s_n.device
+    dtype = s_n.dtype
+    a_n = a_n.to(device=device, dtype=dtype)
+
+    if s_n.ndim == 3 and s_n.shape[1] == 1:
+        s_n = s_n.squeeze(1)
+    if a_n.ndim == 3 and a_n.shape[1] == 1:
+        a_n = a_n.squeeze(1)
+
+    if s_n.shape[:-1] != a_n.shape[:-1]:
+        raise ValueError(
+            f"state_norm leading shape {tuple(s_n.shape[:-1])} must match "
+            f"action_norm {tuple(a_n.shape[:-1])}"
+        )
+
+    def _mean_std_1d(mean, std, last_dim: int, *, label: str):
+        if torch.is_tensor(mean):
+            m = mean.to(device=device, dtype=dtype).reshape(-1)
+        else:
+            m = torch.as_tensor(mean, device=device, dtype=dtype).reshape(-1)
+        if torch.is_tensor(std):
+            s = std.to(device=device, dtype=dtype).reshape(-1)
+        else:
+            s = torch.as_tensor(std, device=device, dtype=dtype).reshape(-1)
+        if m.shape[0] != last_dim:
+            raise ValueError(f"{label}_mean length {m.shape[0]} != last dim {last_dim}")
+        if s.shape[0] != last_dim:
+            raise ValueError(f"{label}_std length {s.shape[0]} != last dim {last_dim}")
+        return m, s
+
+    sm, ss = _mean_std_1d(state_mean, state_std, s_n.shape[-1], label="state")
+    am, as_ = _mean_std_1d(action_mean, action_std, a_n.shape[-1], label="action")
+
+    view_m = (1,) * (s_n.ndim - 1) + (-1,)
+    view_a = (1,) * (a_n.ndim - 1) + (-1,)
+    state = s_n * (ss.view(view_m) + eps) + sm.view(view_m)
+    action = a_n * (as_.view(view_a) + eps) + am.view(view_a)
+
+    if return_numpy:
+        return state.detach().cpu().numpy(), action.detach().cpu().numpy()
+    return state, action
+
 
 def minmax_norm_state_action_pair(
     state_action_pair,
@@ -379,6 +483,131 @@ def minmax_norm_state_action_pair(
     if return_numpy:
         return st_out.detach().cpu().numpy(), tgt_out.detach().cpu().numpy()
     return st_out, tgt_out
+
+
+def denormalize(
+    st_pred,
+    joint_pos_min,
+    joint_pos_max,
+    tau_min,
+    tau_max,
+    *,
+    last_action=None,
+    st_dim: int = 96,
+    base_lin_vel_limit: float = 4.0,
+    base_ang_vel_limit: float = 10.0,
+    joint_vel_limit: float = 15.0,
+):
+    # st_pred -> (num_envs, 1, state_dims) or (num_envs, state_dims)
+    # last_action: optional normalized joint targets (same as tgt_out in minmax_norm_state_action_pair),
+    #   shape (..., nj) or (..., 1, nj); denormalized with joint_pos_min/max to raw joint commands.
+    # Returns st_out only, or (st_out, at_out) if last_action is not None (same numpy/torch dtype rules).
+    return_numpy = isinstance(st_pred, np.ndarray)
+    if return_numpy:
+        n = torch.from_numpy(np.asarray(st_pred, dtype=np.float64))
+    else:
+        if torch.is_tensor(st_pred):
+            n = st_pred
+        else:
+            n = torch.as_tensor(st_pred)
+        if not torch.is_floating_point(n):
+            n = n.float()
+
+    device = n.device
+    dtype = n.dtype
+
+    if n.ndim == 3 and n.shape[1] == 1:
+        n = n.squeeze(1)
+
+    if n.shape[-1] != st_dim:
+        raise ValueError(f"expected last dim st_dim={st_dim}; got {n.shape[-1]}")
+
+    def _bounds_1d(b):
+        if torch.is_tensor(b):
+            t = b.to(device=device, dtype=dtype).reshape(-1)
+        else:
+            t = torch.as_tensor(b, device=device, dtype=dtype).reshape(-1)
+        return t
+
+    jlo = _bounds_1d(joint_pos_min)
+    jhi = _bounds_1d(joint_pos_max)
+    tlo = _bounds_1d(tau_min)
+    thi = _bounds_1d(tau_max)
+    nj = int(jlo.shape[0])
+    na = int(tlo.shape[0])
+    if jhi.shape[0] != nj:
+        raise ValueError("joint_pos_max must match joint_pos_min length")
+    if thi.shape[0] != na:
+        raise ValueError("tau_max must match tau_min length")
+    if st_dim != 9 + 2 * nj + na:
+        raise ValueError(
+            f"Bad layout: st_dim={st_dim}, nj={nj}, na={na} -> need st_dim==9+2*nj+na"
+        )
+
+    na_t = None
+    if last_action is not None:
+        if return_numpy:
+            na_t = torch.from_numpy(np.asarray(last_action, dtype=np.float64))
+        else:
+            if torch.is_tensor(last_action):
+                na_t = last_action
+            else:
+                na_t = torch.as_tensor(last_action)
+            if not torch.is_floating_point(na_t):
+                na_t = na_t.float()
+        na_t = na_t.to(device=device, dtype=dtype)
+        if na_t.ndim == 3 and na_t.shape[1] == 1:
+            na_t = na_t.squeeze(1)
+        if na_t.shape[-1] != nj:
+            raise ValueError(f"last_action last dim must be nj={nj}; got {na_t.shape[-1]}")
+        if na_t.shape[:-1] != n.shape[:-1]:
+            raise ValueError(
+                f"last_action leading shape {tuple(na_t.shape[:-1])} must match st_pred {tuple(n.shape[:-1])}"
+            )
+
+    def _denorm_symmetric_t(norm_z, bound):
+        b = torch.as_tensor(bound, device=device, dtype=dtype)
+        return norm_z * b
+
+    def _denorm_from_minus_one_one_t(norm_z, lo_1d, hi_1d):
+        view_shape = (1,) * (norm_z.ndim - 1) + (-1,)
+        lo_b = lo_1d.view(view_shape)
+        hi_b = hi_1d.view(view_shape)
+        span = hi_b - lo_b
+        valid = span > 1e-8
+        return torch.where(
+            valid,
+            (norm_z + 1.0) * 0.5 * span + lo_b,
+            lo_b,
+        )
+
+    n_base_lin = n[..., 0:3]
+    n_base_ang = n[..., 3:6]
+    n_grav = n[..., 6:9]
+    n_jq = n[..., 9 : 9 + nj]
+    n_jv = n[..., 9 + nj : 9 + 2 * nj]
+    n_tau = n[..., 9 + 2 * nj :]
+
+    base_lin = _denorm_symmetric_t(n_base_lin, base_lin_vel_limit)
+    base_ang = _denorm_symmetric_t(n_base_ang, base_ang_vel_limit)
+    # matches minmax_norm_state_action_pair: gravity uses bound=1, not gravity_limit
+    grav = _denorm_symmetric_t(n_grav, 1.0)
+    jq = _denorm_from_minus_one_one_t(n_jq, jlo, jhi)
+    jv = _denorm_symmetric_t(n_jv, joint_vel_limit)
+    tau = _denorm_from_minus_one_one_t(n_tau, tlo, thi)
+    st_out = torch.cat(
+        [base_lin, base_ang, grav, jq, jv, tau], dim=-1
+    )
+
+    if na_t is not None:
+        at_out = _denorm_from_minus_one_one_t(na_t, jlo, jhi)
+        if return_numpy:
+            return st_out.detach().cpu().numpy(), at_out.detach().cpu().numpy()
+        return st_out, at_out
+
+    if return_numpy:
+        return st_out.detach().cpu().numpy()
+    return st_out
 
 
 
