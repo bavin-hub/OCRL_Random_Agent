@@ -75,45 +75,50 @@ class Trainer:
                                   self.config['world_model_arch_params']['gru_hidden_dim'])).to(self.config['device'])
                 
                 x = batch_st_ct_at.to(self.config["device"]) # x -> (bs, M+N, s_dim+a_dim)
-                seq_len = x.shape[1]
                 batch_loss = 0
                 alpha = 1.0
-                # Iterate over RNN timestamps
-                for t in range(seq_len-1):
-                    loss_t = 0
-                    
-                    # Extract current state and action (ignore contacts for input)
-                    # x is structured as [states (96), contacts (30), actions (12)]
-                    st_t = torch.unsqueeze(x[:, t, :state_dims], dim=1)
+
+                # ── Batched warm-up: feed first M-1 history steps in one GRU call ──
+                # (step M-1 is handled by the first predict call below)
+                if M > 1:
+                    history_states = x[:, :M-1, :state_dims]          # (B, M-1, S)
+                    history_actions = x[:, :M-1, state_dims+30:state_dims+30+action_dims]  # (B, M-1, A)
+                    history_input = torch.cat((history_states, history_actions), dim=-1)  # (B, M-1, S+A)
+                    _, ht = world_model.gru_unit(history_input, ht)  # warm up hidden state in one shot
+
+                # ── First prediction step at t=M-1 ──
+                x_prev = x[:, M-1:M, :state_dims]  # last history state (B, 1, S)
+                st_next_pred, ht, std_logits, mu_t_next, contact_pred = world_model.forward(
+                    torch.cat((x_prev, x[:, M-1:M, state_dims+30:state_dims+30+action_dims]), dim=-1),
+                    ht, predict=True, x_prev=x_prev
+                )
+
+                target = torch.unsqueeze(x[:, M, :state_dims], dim=1)
+                c_target = torch.unsqueeze(x[:, M, state_dims:state_dims+30], dim=1)
+                loss_t = world_model.gnll_loss(state_mean=torch.squeeze(mu_t_next, dim=1),
+                                               state_std=torch.squeeze(std_logits, dim=1),
+                                               state_target=torch.squeeze(target, dim=1))
+                loss_c = world_model.mse_loss(st_pred=torch.squeeze(contact_pred, dim=1),
+                                              st_true=torch.squeeze(c_target, dim=1))
+                contact_weight = self.config['world_model_training_params'].get('contact_loss_weight', 0.5)
+                batch_loss += alpha * (loss_t + contact_weight * loss_c)
+                alpha *= decay
+
+                for t in range(M, M + N - 1):
                     at_t = torch.unsqueeze(x[:, t, state_dims+30:state_dims+30+action_dims], dim=1)
-                    input_t = torch.cat((st_t, at_t), dim=-1)
-                    
-                    if t < M-1:
-                        ht = world_model.forward(input_t, ht, predict=False) 
-                    else:
-                        if t == M-1:
-                            x_prev = st_t
-                            st_next_pred, ht, std_logits, mu_t_next, contact_pred = world_model.forward(input_t, ht, predict=True, x_prev=x_prev)
-                        else:
-                            # Feedback the predicted state along with the real action
-                            input_t_pred = torch.cat((st_next_pred, at_t), dim=-1)
-                            st_next_pred, ht, std_logits, mu_t_next, contact_pred = world_model.forward(input_t_pred, ht, predict=True, x_prev=st_next_pred)
-                            
-                        target = torch.unsqueeze(x[:, t+1, :state_dims], dim=1)
-                        c_target = torch.unsqueeze(x[:, t+1, state_dims:state_dims+30], dim=1)
-                        
-                        # GNLL loss for state prediction (with uncertainty)
-                        loss_t = world_model.gnll_loss(state_mean=torch.squeeze(mu_t_next, dim=1),
-                                                       state_std=torch.squeeze(std_logits, dim=1),
-                                                       state_target=torch.squeeze(target, dim=1))
-                        
-                        # MSE loss for contact prediction
-                        loss_c = world_model.mse_loss(st_pred=torch.squeeze(contact_pred, dim=1),
-                                                      st_true=torch.squeeze(c_target, dim=1))
-                                                      
-                        contact_weight = self.config['world_model_training_params'].get('contact_loss_weight', 0.5)
-                        batch_loss += alpha * (loss_t + contact_weight * loss_c)
-                        alpha *= decay
+                    input_t_pred = torch.cat((st_next_pred, at_t), dim=-1)
+                    st_next_pred, ht, std_logits, mu_t_next, contact_pred = world_model.forward(
+                        input_t_pred, ht, predict=True, x_prev=st_next_pred
+                    )
+                    target = torch.unsqueeze(x[:, t+1, :state_dims], dim=1)
+                    c_target = torch.unsqueeze(x[:, t+1, state_dims:state_dims+30], dim=1)
+                    loss_t = world_model.gnll_loss(state_mean=torch.squeeze(mu_t_next, dim=1),
+                                                   state_std=torch.squeeze(std_logits, dim=1),
+                                                   state_target=torch.squeeze(target, dim=1))
+                    loss_c = world_model.mse_loss(st_pred=torch.squeeze(contact_pred, dim=1),
+                                                  st_true=torch.squeeze(c_target, dim=1))
+                    batch_loss += alpha * (loss_t + contact_weight * loss_c)
+                    alpha *= decay
                 
                 batch_loss /= N
 
