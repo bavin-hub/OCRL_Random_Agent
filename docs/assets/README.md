@@ -19,3 +19,16 @@ show the architecture diagrams inline.
   made by `scripts/create_pipeline_video.py`, using animated draw.io-style diagrams on white and baseline 1199 simulation footage.
 - `videos/baseline-1199-rollout.mp4`: the separately trained MJLab baseline, evaluated
   with unmodified actor observations. Provenance is in `../baselines.json`.
+
+The README embeds `videos/pipeline-preview.gif` for inline animation and links to
+the MP4 with `?raw=true` to bypass GitHub's file viewer. Regenerate the preview
+after updating the video (run from the repository root; requires FFmpeg):
+
+```bash
+ffmpeg -v error -y -i docs/assets/videos/pipeline.mp4 \
+  -filter_complex 'fps=6,scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle' \
+  -loop 0 docs/assets/videos/pipeline-preview.gif
+```
+
+The preview preserves the full 67-second sequence at 6 fps; the MP4 retains the
+original resolution and frame rate.
