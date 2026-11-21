@@ -1,0 +1,19 @@
+{
+  "completed_episodes": [
+    {
+      "env": 0,
+      "return": 65.2584457397461,
+      "length": 1000,
+      "timeout": true
+    }
+  ],
+  "unfinished_episode_lengths": [
+    0
+  ],
+  "mean_step_reward": 0.06525846332963556,
+  "world_model": {
+    "available": true,
+    "horizon_steps": 8,
+    "normalized_rmse": 0.06941947340965271
+  }
+}

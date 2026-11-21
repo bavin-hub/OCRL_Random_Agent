@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-21",
+  "gpu": "NVIDIA GeForce RTX 5090, 32 GB",
+  "driver": "580.178.04",
+  "checks": {
+    "unit_tests": 6,
+    "fresh_training": "4 iterations, 8 environments; passed",
+    "checkpoint_initialization": "3 iterations, 8 environments; passed",
+    "evaluation": "3710 and 7030, 1000 steps each; completed with recorded limitations",
+    "clean_source_snapshot": "unit tests and both command-line help commands passed",
+    "full_fresh_dependency_install": "not performed",
+    "restructured_package": "editable installation, relocated source tests, fresh/reload GPU training, 80-step video evaluation, plotting, checksums and relative metadata paths passed"
+  },
+  "historical_source_sha256": {
+    "train_along_wm.py": "1d952d4b970fe6daf5cb3de21cc8e41b2b78936e02f95d219d9e8f9dcf6a3293",
+    "eval_along_wm.py": "5802de2b755e37a830e9c22c012eea813385991de4641229217ba95f1919a796",
+    "runtime.py": "5e5e942c8e09f0ab80fbbd062a8db7f19146c6156f44892c101adf4724cd67f1",
+    "utils.py": "233bf4e2608e9ec16d97faf93e194379f7fd58f5b386bc364f2e412718111435",
+    "models/world_model.py": "c37a73c3d2f07e5b5537a2cfdf52be2c41037bc83ef221bd2784cfb5a3de463b",
+    "runners/train.py": "2d9239041651195dd79403207355009af430fcd932ae5c4529d13077623f351c",
+    "runners/imagination.py": "3584757096435309dee4550d49e286e7402cd366fc2898613002a1868d333b42",
+    "storage/replay_buffer.py": "db72ab7d30f7d9368bf40a61c17ccedae0f1f33027e29bfcc108a49068a77b6f",
+    "config.json": "b946d10f9b38962aa0b3b661cca49199341d15d5c851794d8c1cedb26266d8bb",
+    "requirements.txt": "c571cffb75c8868e4504d6155a592b4eac521219bfc91871d3d27d829874ea5c"
+  },
+  "source_sha256": {
+    "src/ocrl/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/ocrl/checkpoints.py": "c52cdccead370432b0dcdcc30b605f3a2ab0c3769bbb95d131403bdbe3824ae7",
+    "src/ocrl/cli/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/ocrl/cli/evaluate.py": "5f3da1d3a9c722b3eefec5ce0c1c989dd9f1cd7cb9b40d93d2b276af35213f18",
+    "src/ocrl/cli/train.py": "0d5c8a34bba68c2821e6a4c75813f73e684b3ed199741e9005e4779797800ace",
+    "src/ocrl/models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/ocrl/models/factory.py": "bfa8db208b329dc9412b027ddf9ac1d588c322714bef066b62635efa591d463f",
+    "src/ocrl/models/world_model.py": "c37a73c3d2f07e5b5537a2cfdf52be2c41037bc83ef221bd2784cfb5a3de463b",
+    "src/ocrl/normalization.py": "ab7e7e99baeb3e1e2dad7826000110b8a4567ea2e587b4a4f270f0e89d311bf5",
+    "src/ocrl/observations.py": "bcb171d4c86f133c5ee8e69c50e18625d63effab92a97abae8a4e108544a8d69",
+    "src/ocrl/storage/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/ocrl/storage/replay_buffer.py": "db72ab7d30f7d9368bf40a61c17ccedae0f1f33027e29bfcc108a49068a77b6f",
+    "src/ocrl/training/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/ocrl/training/imagination.py": "3584757096435309dee4550d49e286e7402cd366fc2898613002a1868d333b42",
+    "src/ocrl/training/world_model.py": "c6c907b127b4315e2fb87e2d4fefd8d534b58f81708c7f3cdd239b8090fa6699"
+  }
+}

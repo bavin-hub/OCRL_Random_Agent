@@ -1,0 +1,229 @@
+{
+  "completed_episodes": [
+    {
+      "env": 0,
+      "return": -59.78285598754883,
+      "length": 15,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -73.85668182373047,
+      "length": 17,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -82.14933776855469,
+      "length": 25,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -60.55619430541992,
+      "length": 16,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -63.17333984375,
+      "length": 18,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -97.42045593261719,
+      "length": 28,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -60.58025360107422,
+      "length": 15,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -98.60709381103516,
+      "length": 35,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -73.76184844970703,
+      "length": 15,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -65.23169708251953,
+      "length": 15,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -71.08350372314453,
+      "length": 18,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -59.09159851074219,
+      "length": 15,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -70.47017669677734,
+      "length": 17,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -82.77561950683594,
+      "length": 27,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -92.64046478271484,
+      "length": 36,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -66.98014068603516,
+      "length": 18,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -116.35546112060547,
+      "length": 48,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -77.33200073242188,
+      "length": 16,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -109.43500518798828,
+      "length": 50,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -98.75725555419922,
+      "length": 34,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -62.06559753417969,
+      "length": 16,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -85.216552734375,
+      "length": 34,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -136.2300567626953,
+      "length": 50,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -84.38554382324219,
+      "length": 24,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -65.98937225341797,
+      "length": 15,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -84.23474884033203,
+      "length": 35,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -94.68660736083984,
+      "length": 29,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -121.15779876708984,
+      "length": 50,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -94.43820190429688,
+      "length": 28,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -121.80709838867188,
+      "length": 29,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -109.65084075927734,
+      "length": 55,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -84.76545715332031,
+      "length": 27,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -66.89545440673828,
+      "length": 16,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -105.11968231201172,
+      "length": 56,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -109.84819030761719,
+      "length": 29,
+      "timeout": false
+    },
+    {
+      "env": 0,
+      "return": -70.01799011230469,
+      "length": 17,
+      "timeout": false
+    }
+  ],
+  "unfinished_episode_lengths": [
+    12
+  ],
+  "mean_step_reward": -3.1322821941077708,
+  "world_model": {
+    "available": true,
+    "horizon_steps": 8,
+    "normalized_rmse": 3.2593095302581787
+  }
+}

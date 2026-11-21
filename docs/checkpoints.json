@@ -1,0 +1,54 @@
+{
+  "source_commit": "7f500c3891dbfbbe37dde79c28d749df2700784b",
+  "note": "Historical config provenance is incomplete; original working tree had uncommitted changes. These files are local and are not included in Git.",
+  "checkpoints": [
+    {
+      "run": "wm_gru_2026-05-09_23:10:44",
+      "iteration": 3710,
+      "kind": "policy",
+      "path": "artifacts/historical/saved_models/model_3710.pt",
+      "sha256": "d3514cf909f88d3e7aa8c17cdd4342efa36f390788a9eb874c227ed7d059006d",
+      "bytes": 3890933
+    },
+    {
+      "run": "wm_gru_2026-05-09_23:10:44",
+      "iteration": 3710,
+      "kind": "world_model",
+      "path": "artifacts/historical/logs/ckpts/wm_gru_2026-05-09_23:10:44/wm-itr-ckpt-epoch_3710.pth",
+      "sha256": "dab2b5ac964aa12f8399162df6b76bf90d0c271b82f75820716a36f808eed176",
+      "bytes": 9377621
+    },
+    {
+      "run": "wm_gru_2026-05-09_19:02:34",
+      "iteration": 7000,
+      "kind": "policy",
+      "path": "artifacts/historical/saved_models_copy/model_7000.pt",
+      "sha256": "a554c3ce6025d70e98c35015df83b765d98c2a0668a74cb3b5aff51e2006c489",
+      "bytes": 3890933
+    },
+    {
+      "run": "wm_gru_2026-05-09_19:02:34",
+      "iteration": 7000,
+      "kind": "world_model",
+      "path": "artifacts/historical/logs/ckpts/wm_gru_2026-05-09_19:02:34/wm-itr-ckpt-epoch_7000.pth",
+      "sha256": "0c50fb29ca02470b463bf840005d5a6ba4fb03d373cc9ab62c95000371ef1304",
+      "bytes": 9377621
+    },
+    {
+      "run": "wm_gru_2026-05-09_19:02:34",
+      "iteration": 7030,
+      "kind": "policy",
+      "path": "artifacts/historical/saved_models_copy/model_7030.pt",
+      "sha256": "297429aa016d2886ea6cd0df3e212ed812dd66fa74e203e50cb3697e482ece15",
+      "bytes": 3890933
+    },
+    {
+      "run": "wm_gru_2026-05-09_19:02:34",
+      "iteration": 7030,
+      "kind": "world_model",
+      "path": "artifacts/historical/logs/ckpts/wm_gru_2026-05-09_19:02:34/wm-itr-ckpt-epoch_7030.pth",
+      "sha256": "6a83e0d4fcc3fa32a67b6ea75ab45cd885313825a492a4d962480276364df1f4",
+      "bytes": 9377621
+    }
+  ]
+}
