@@ -153,7 +153,7 @@ python scripts/create_pipeline_video.py \
   --output runs/pipeline-explainer.mp4
 ```
 
-The output is a 67-second, 1280×720 MP4 at 24 fps, with burned-in captions and no
+The output is a 57-second, 1280×720 MP4 at 24 fps, with burned-in captions and no
 audio, plus chapter stills, SRT captions, and a source manifest. It uses a white background and animated diagram nodes/arrows to show transition
 collection, world-model updates, initial simulator policy training, the warm-start
 switch to world-model policy training, repeated optimization, and rollout results. The deployment footage is explicitly labeled

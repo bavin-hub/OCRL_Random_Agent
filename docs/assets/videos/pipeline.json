@@ -1,5 +1,5 @@
 {
-  "duration_seconds": 67,
+  "duration_seconds": 57,
   "fps": 24,
   "resolution": [
     1280,
@@ -12,37 +12,37 @@
   "chapters": [
     [
       0,
-      20,
+      10,
       "Simulator-trained policy rollout in simulation",
       "Separate simulator-trained baseline 1199; this footage is not an online world-model training result."
     ],
     [
-      20,
-      29,
+      10,
+      19,
       "1. Collect transitions and store them in a buffer",
       "Policy actions produce simulator transitions: state, action, reward, next state, done."
     ],
     [
-      29,
-      40,
+      19,
+      30,
       "2. Update the world model",
       "Sample sequences, warm up the GRU, predict future states, and minimize prediction loss."
     ],
     [
-      40,
-      49,
+      30,
+      39,
       "3. Train the policy in the simulator first",
       "Before the switch: simulator rollouts provide the rewards and transitions for PPO."
     ],
     [
+      39,
       49,
-      59,
       "3. Switch policy training to the world model",
       "After warm-start: imagined transitions and custom rewards drive PPO updates."
     ],
     [
-      59,
-      67,
+      49,
+      57,
       "4. Repeat world-model and policy optimization",
       "Collect fresh transitions, update the world model, then update the policy again."
     ]

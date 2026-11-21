@@ -16,12 +16,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from matplotlib.font_manager import findfont
 
 CHAPTERS = [
-    (0, 20, 'Simulator-trained policy rollout in simulation', 'Separate simulator-trained baseline 1199; this footage is not an online world-model training result.'),
-    (20, 29, '1. Collect transitions and store them in a buffer', 'Policy actions produce simulator transitions: state, action, reward, next state, done.'),
-    (29, 40, '2. Update the world model', 'Sample sequences, warm up the GRU, predict future states, and minimize prediction loss.'),
-    (40, 49, '3. Train the policy in the simulator first', 'Before the switch: simulator rollouts provide the rewards and transitions for PPO.'),
-    (49, 59, '3. Switch policy training to the world model', 'After warm-start: imagined transitions and custom rewards drive PPO updates.'),
-    (59, 67, '4. Repeat world-model and policy optimization', 'Collect fresh transitions, update the world model, then update the policy again.'),
+    (0, 10, 'Simulator-trained policy rollout in simulation', 'Separate simulator-trained baseline 1199; this footage is not an online world-model training result.'),
+    (10, 19, '1. Collect transitions and store them in a buffer', 'Policy actions produce simulator transitions: state, action, reward, next state, done.'),
+    (19, 30, '2. Update the world model', 'Sample sequences, warm up the GRU, predict future states, and minimize prediction loss.'),
+    (30, 39, '3. Train the policy in the simulator first', 'Before the switch: simulator rollouts provide the rewards and transitions for PPO.'),
+    (39, 49, '3. Switch policy training to the world model', 'After warm-start: imagined transitions and custom rewards drive PPO updates.'),
+    (49, 57, '4. Repeat world-model and policy optimization', 'Collect fresh transitions, update the world model, then update the policy again.'),
 ]
 W,H=1280,720
 INK='#263238'; GRAY='#65717a'; BLUE='#dae8fc'; GREEN='#d5e8d4'; YELLOW='#fff2cc'; PURPLE='#e1d5e7'; ACCENT='#2879b9'
@@ -88,9 +88,10 @@ def main():
         return rendered.resize((max(1,round(rendered.width/3)), max(1,round(rendered.height/3))), Image.Resampling.LANCZOS)
     reader=imageio.get_reader(args.rollout);source_fps=reader.get_meta_data()['fps'];source_count=reader.count_frames()
     writer=imageio.get_writer(args.output,fps=args.fps,codec='libx264',quality=8,macro_block_size=16)
-    stills={4:'overview',10:'deployment',27:'collection',36:'world-model',45:'warm-start',55:'ppo',64:'loop'}
+    stills={4:'overview',5:'deployment',17:'collection',26:'world-model',35:'warm-start',45:'ppo',54:'loop'}
+    duration=CHAPTERS[-1][1]
     try:
-        for frame_id in range(67*args.fps):
+        for frame_id in range(duration*args.fps):
             t=frame_id/args.fps
             chapter_index=next(i for i,(a,b,_,_) in enumerate(CHAPTERS) if a<=t<b)
             start,end,title,caption=CHAPTERS[chapter_index];local=t-start
@@ -198,7 +199,7 @@ def main():
                 if d.textlength(trial,font=fonts[20])>1180:text(45,y,row,20);row=word;y+=25
                 else:row=trial
             text(45,y,row,20)
-            d.rectangle((0,716,int(W*t/67),719),fill=ACCENT)
+            d.rectangle((0,716,int(W*t/duration),719),fill=ACCENT)
             writer.append_data(np.asarray(im))
             for at,name in stills.items():
                 if frame_id==at*args.fps:im.save(args.output.with_name('pipeline-'+name+'.png'))
@@ -207,6 +208,6 @@ def main():
     def ts(s):return f'00:{int(s)//60:02d}:{int(s)%60:02d},000'
     args.output.with_suffix('.srt').write_text('\n\n'.join(f'{i+1}\n{ts(a)} --> {ts(b)}\n{title}\n{caption}' for i,(a,b,title,caption) in enumerate(CHAPTERS))+'\n')
     with args.rollout.open('rb') as f:checksum=hashlib.file_digest(f,'sha256').hexdigest()
-    args.output.with_suffix('.json').write_text(json.dumps({'duration_seconds':67,'fps':args.fps,'resolution':[W,H],'audio':'none; burned-in captions','rollout':os.path.relpath(args.rollout),'rollout_sha256':checksum,'checkpoint_label':args.checkpoint_label,'chapters':CHAPTERS,'methodology_note':'Requested intended sequence includes simulator PPO before switching to WM PPO. Current online implementation collects data and fits WM during warm-start but does not yet perform those initial simulator PPO updates.','footage_note':'Separately trained simulator baseline, not a policy produced by the illustrated WM training run.'},indent=2)+'\n')
+    args.output.with_suffix('.json').write_text(json.dumps({'duration_seconds':duration,'fps':args.fps,'resolution':[W,H],'audio':'none; burned-in captions','rollout':os.path.relpath(args.rollout),'rollout_sha256':checksum,'checkpoint_label':args.checkpoint_label,'chapters':CHAPTERS,'methodology_note':'Requested intended sequence includes simulator PPO before switching to WM PPO. Current online implementation collects data and fits WM during warm-start but does not yet perform those initial simulator PPO updates.','footage_note':'Separately trained simulator baseline, not a policy produced by the illustrated WM training run.'},indent=2)+'\n')
 
 if __name__=='__main__':main()
