@@ -23,10 +23,27 @@ def parse_args():
     p.add_argument('--video', action='store_true')
     p.add_argument('--width', type=int, default=640)
     p.add_argument('--height', type=int, default=480)
+    p.add_argument('--camera-azimuth', type=float, default=90.0)
+    p.add_argument('--camera-elevation', type=float, default=-20.0)
+    p.add_argument('--camera-distance', type=float, default=3.5)
+    p.add_argument('--observation-mode', choices=['world-model', 'mjlab'], default='world-model', help='Use mjlab for simulator-trained baseline policies; skips world-model evaluation')
     p.add_argument('--action-history', choices=['scaled','normalized'], default='scaled', help='Historical real rollout used scaled targets; imagination used normalized targets')
     p.add_argument('--prediction-horizon', type=int, help='Override forecast steps; warmup remains 32')
     p.add_argument('--command', type=float, nargs=3, metavar=('VX','VY','WZ'), help='Fixed body-frame velocity command')
     return p.parse_args()
+
+class SimulatorPolicy:
+    """Use the baseline policy's original, unmodified MJLab actor observation."""
+    def __init__(self, actor):
+        self.actor = actor
+
+    def __call__(self, obs):
+        from tensordict import TensorDict
+        features = actor_observation(obs)
+        with torch.inference_mode():
+            return self.actor(TensorDict({'policy': features}, batch_size=[features.shape[0]],
+                                         device=features.device), stochastic_output=False)
+
 
 class Policy:
     def __init__(self, env, actor, adapter, action_history="scaled", config=None):
@@ -100,6 +117,9 @@ def main():
     cfg.sim.nconmax = 128
     cfg.viewer.width = args.width
     cfg.viewer.height = args.height
+    cfg.viewer.azimuth = args.camera_azimuth
+    cfg.viewer.elevation = args.camera_elevation
+    cfg.viewer.distance = args.camera_distance
     cfg.observations['actor'].enable_corruption = False
     cfg.events.pop('push_robot', None)
     cfg.curriculum = {}
@@ -125,15 +145,19 @@ def main():
         checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=True)
         actor.load_state_dict(checkpoint['actor_state_dict'], strict=True)
         actor.eval()
-        wm = CreateWorlModelInstance(config)
-        checkpoint_wm = torch.load(args.world_model, map_location=args.device, weights_only=True)
-        wm.load_state_dict(checkpoint_wm.get('model_state_dict', checkpoint_wm), strict=True)
-        wm.eval()
-        policy = Policy(env, actor, adapter, args.action_history, config)
+        wm = None
+        if args.observation_mode == 'world-model':
+            wm = CreateWorlModelInstance(config)
+            checkpoint_wm = torch.load(args.world_model, map_location=args.device, weights_only=True)
+            wm.load_state_dict(checkpoint_wm.get('model_state_dict', checkpoint_wm), strict=True)
+            wm.eval()
+            policy = Policy(env, actor, adapter, args.action_history, config)
+        else:
+            policy = SimulatorPolicy(actor)
         args.output.mkdir(parents=True)
         import importlib.metadata as package_metadata
         metadata = {'versions': {name:package_metadata.version(name) for name in ['torch','mjlab','rsl-rl-lib','mujoco','mujoco-warp']}, 'arguments':portable_arguments(args), 'policy_sha256':sha256(args.checkpoint),
-                    'world_model_sha256':sha256(args.world_model), 'config':config,
+                    'world_model_sha256':sha256(args.world_model) if wm is not None else None, 'config':config,
                     'evaluation_protocol':'No observation corruption or pushes; simulator reward; fixed seed',
                     'policy_iteration':checkpoint.get('iter')}
         (args.output/'manifest.json').write_text(json.dumps(metadata,default=str,indent=2))
@@ -155,6 +179,7 @@ def main():
                 state = robot_state(env).clone()
                 command = actor_observation(obs)[:,-3:].clone()
                 body_velocity = env.unwrapped.scene['robot'].data.root_link_lin_vel_b.clone()
+                base_position = env.unwrapped.scene['robot'].data.root_link_pos_w.clone()
                 body_angular = env.unwrapped.scene['robot'].data.root_link_ang_vel_b.clone()
                 actions = policy(obs)
                 normalized_action = (adapter.scale_action(actions)-act_mean)/(act_std+1e-5)
@@ -166,7 +191,9 @@ def main():
                 lengths += 1
                 trace.append([step, rewards.mean().item(),
                               *((body_velocity[:,:2]-command[:,:2]).square().mean(0).sqrt().tolist()),
-                              (body_angular[:,2]-command[:,2]).square().mean().sqrt().item()])
+                              (body_angular[:,2]-command[:,2]).square().mean().sqrt().item(),
+                              command[:,0].mean().item(),body_velocity[:,0].mean().item(),
+                              base_position[0,0].item(),base_position[0,1].item()])
                 for i in dones.nonzero().flatten().tolist():
                     timeout = bool(extras.get('time_outs',torch.zeros_like(dones))[i])
                     episodes.append({'env':i,'return':returns[i].item(),'length':lengths[i].item(),'timeout':timeout})
@@ -177,10 +204,10 @@ def main():
                     writer.append_data(frame)
                     if step == 0: imageio.imwrite(args.output/'poster.png',frame)
         np.savetxt(args.output/'metrics.csv',np.asarray(trace),delimiter=',',
-                   header='step,simulator_reward,vx_rmse,vy_rmse,yaw_rate_rmse',comments='')
+                   header='step,simulator_reward,vx_rmse,vy_rmse,yaw_rate_rmse,command_vx,actual_vx,base_x,base_y',comments='')
         summary = {'completed_episodes':episodes, 'unfinished_episode_lengths':lengths.tolist(),
                    'mean_step_reward':float(np.mean(np.asarray(trace)[:,1])),
-                   'world_model':export_predictions(wm,config,best_rows,args.output)}
+                   'world_model':export_predictions(wm,config,best_rows,args.output) if wm is not None else {'available':False,'reason':'Simulator-trained baseline; world model not used'}}
         (args.output/'summary.json').write_text(json.dumps(summary,indent=2))
         print(json.dumps(summary,indent=2))
     finally:

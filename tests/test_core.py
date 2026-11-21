@@ -7,6 +7,19 @@ from ocrl.storage.replay_buffer import ReplayBuffer
 from ocrl.models.factory import CreateWorlModelInstance
 
 class CoreTests(unittest.TestCase):
+    def test_simulator_policy_preserves_actor_observation(self):
+        from ocrl.cli.evaluate import SimulatorPolicy
+        from tensordict import TensorDict
+        observations = torch.arange(198,dtype=torch.float32).reshape(2,99)
+        captured = {}
+        def actor(obs, stochastic_output):
+            captured['features'] = obs['policy']
+            self.assertFalse(stochastic_output)
+            return torch.zeros(2,29)
+        output = SimulatorPolicy(actor)(TensorDict({'actor':observations},batch_size=[2]))
+        torch.testing.assert_close(captured['features'],observations)
+        self.assertEqual(tuple(output.shape),(2,29))
+
     def test_metadata_paths_are_portable(self):
         args=Namespace(config=Path('configs/default.json').resolve(), seed=42)
         saved=portable_arguments(args)

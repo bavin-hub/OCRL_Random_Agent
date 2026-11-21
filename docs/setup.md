@@ -125,3 +125,43 @@ python scripts/verify_checkpoints.py
 All documented paths are relative to the repository root. Configuration defaults to
 `configs/default.json`; override it with `--config`. Installed commands
 `ocrl-train` and `ocrl-evaluate` provide the same interfaces as the scripts.
+
+## Simulator-trained locomotion baseline
+
+The separately trained checkpoint 1199 uses standard MJLab actor observations.
+It is a baseline demonstration, not an imagination-trained policy from this run.
+Its checksum and provenance are in [baselines.json](baselines.json). Checkpoint
+files are local release artifacts and are not included in Git.
+
+```bash
+MUJOCO_GL=egl python scripts/evaluate.py \
+  --observation-mode mjlab --checkpoint artifacts/baselines/g1-1199.pt \
+  --steps 1000 --command 0.5 0 0 --video --width 960 --height 544 \
+  --camera-azimuth 135 --output runs/baseline-demo
+```
+
+`--observation-mode mjlab` skips world-model loading and forecasts, and passes
+MJLab's actor observation directly to the baseline policy. Do not use the
+world-model observation adapter for these baseline weights.
+
+## Render the pipeline explainer
+
+```bash
+python scripts/create_pipeline_video.py \
+  --rollout runs/baseline-demo/rollout.mp4 \
+  --checkpoint-label "G1 simulator baseline / checkpoint 1199" \
+  --output runs/pipeline-explainer.mp4
+```
+
+The output is a 67-second, 1280×720 MP4 at 24 fps, with burned-in captions and no
+audio, plus chapter stills, SRT captions, and a source manifest. It uses a white background and animated diagram nodes/arrows to show transition
+collection, world-model updates, initial simulator policy training, the warm-start
+switch to world-model policy training, repeated optimization, and rollout results. The deployment footage is explicitly labeled
+as a separate baseline. FFmpeg is supplied through `imageio-ffmpeg`; install the
+pinned package dependencies before rendering.
+
+The animation shows the requested intended training sequence. In the current
+implementation, the warm-start phase collects transitions and fits the world model
+but does not yet update PPO in the simulator. Adding those initial simulator PPO
+updates requires a separate training-code change. No training behavior was changed
+when revising the video. Pass `--overwrite` to replace a previous rendered video.

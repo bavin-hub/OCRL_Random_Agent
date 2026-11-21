@@ -3,13 +3,14 @@
   "gpu": "NVIDIA GeForce RTX 5090, 32 GB",
   "driver": "580.178.04",
   "checks": {
-    "unit_tests": 6,
+    "unit_tests": 7,
     "fresh_training": "4 iterations, 8 environments; passed",
     "checkpoint_initialization": "3 iterations, 8 environments; passed",
     "evaluation": "3710 and 7030, 1000 steps each; completed with recorded limitations",
     "clean_source_snapshot": "unit tests and both command-line help commands passed",
     "full_fresh_dependency_install": "not performed",
-    "restructured_package": "editable installation, relocated source tests, fresh/reload GPU training, 80-step video evaluation, plotting, checksums and relative metadata paths passed"
+    "restructured_package": "editable installation, relocated source tests, fresh/reload GPU training, 80-step video evaluation, plotting, checksums and relative metadata paths passed",
+    "baseline_video": "1199 and 1000: 1000-step GPU evaluations; 1199 side-view rerun; 67-second 720p24 pipeline video decoded and visually checked"
   },
   "historical_source_sha256": {
     "train_along_wm.py": "1d952d4b970fe6daf5cb3de21cc8e41b2b78936e02f95d219d9e8f9dcf6a3293",
@@ -27,7 +28,7 @@
     "src/ocrl/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "src/ocrl/checkpoints.py": "c52cdccead370432b0dcdcc30b605f3a2ab0c3769bbb95d131403bdbe3824ae7",
     "src/ocrl/cli/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "src/ocrl/cli/evaluate.py": "5f3da1d3a9c722b3eefec5ce0c1c989dd9f1cd7cb9b40d93d2b276af35213f18",
+    "src/ocrl/cli/evaluate.py": "c5fdfd1e8fdce47aeaa26c5022e89e436d18fdcee26619c584c5f11fd02efe61",
     "src/ocrl/cli/train.py": "0d5c8a34bba68c2821e6a4c75813f73e684b3ed199741e9005e4779797800ace",
     "src/ocrl/models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "src/ocrl/models/factory.py": "bfa8db208b329dc9412b027ddf9ac1d588c322714bef066b62635efa591d463f",

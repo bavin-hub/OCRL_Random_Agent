@@ -14,3 +14,8 @@
 
 The original report and diagram PDFs are preserved. PNG exports allow GitHub to
 show the architecture diagrams inline.
+
+- `videos/pipeline.mp4` and its chapter stills: a reproducible methodology animation
+  made by `scripts/create_pipeline_video.py`, using animated draw.io-style diagrams on white and baseline 1199 simulation footage.
+- `videos/baseline-1199-rollout.mp4`: the separately trained MJLab baseline, evaluated
+  with unmodified actor observations. Provenance is in `../baselines.json`.
