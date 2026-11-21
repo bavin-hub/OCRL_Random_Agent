@@ -30,5 +30,5 @@ ffmpeg -v error -y -i docs/assets/videos/pipeline.mp4 \
   -loop 0 docs/assets/videos/pipeline-preview.gif
 ```
 
-The preview preserves the full 57-second sequence at 6 fps; the MP4 retains the
+The preview preserves the full 53-second sequence at 6 fps; the MP4 retains the
 original resolution and frame rate.

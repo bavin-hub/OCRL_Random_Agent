@@ -16,7 +16,7 @@ checkpoint is unstable in the measured evaluation. See [validation and limitatio
 
 [![Watch the animated training and deployment pipeline](docs/assets/videos/pipeline-preview.gif)](docs/assets/videos/pipeline.mp4?raw=true)
 
-**[Open or download the full 57-second pipeline video](docs/assets/videos/pipeline.mp4?raw=true)** —
+**[Open or download the full 53-second pipeline video](docs/assets/videos/pipeline.mp4?raw=true)** —
 opens with the simulator baseline rollout, then shows transition collection and
 replay, world-model updates, simulator PPO before
 warm-start ends, a switch to world-model PPO, and repeated optimization. Captioned, with actual rollout

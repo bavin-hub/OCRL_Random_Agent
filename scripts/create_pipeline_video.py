@@ -16,12 +16,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from matplotlib.font_manager import findfont
 
 CHAPTERS = [
-    (0, 10, 'Simulator-trained policy rollout in simulation', 'Separate simulator-trained baseline 1199; this footage is not an online world-model training result.'),
-    (10, 19, '1. Collect transitions and store them in a buffer', 'Policy actions produce simulator transitions: state, action, reward, next state, done.'),
-    (19, 30, '2. Update the world model', 'Sample sequences, warm up the GRU, predict future states, and minimize prediction loss.'),
-    (30, 39, '3. Train the policy in the simulator first', 'Before the switch: simulator rollouts provide the rewards and transitions for PPO.'),
-    (39, 49, '3. Switch policy training to the world model', 'After warm-start: imagined transitions and custom rewards drive PPO updates.'),
-    (49, 57, '4. Repeat world-model and policy optimization', 'Collect fresh transitions, update the world model, then update the policy again.'),
+    (0, 6, 'World model based optimized policy rollout in simulation', 'Separate simulator-trained baseline 1199; this footage is not an online world-model training result.'),
+    (6, 15, '1. Collect transitions and store them in a buffer', 'Policy actions produce simulator transitions: state, action, reward, next state, done.'),
+    (15, 26, '2. Update the world model', 'Sample sequences, warm up the GRU, predict future states, and minimize prediction loss.'),
+    (26, 35, '3. Train the policy in the simulator first', 'Before the switch: simulator rollouts provide the rewards and transitions for PPO.'),
+    (35, 45, '3. Switch policy training to the world model', 'After warm-start: imagined transitions and custom rewards drive PPO updates.'),
+    (45, 53, '4. Repeat world-model and policy optimization', 'Collect fresh transitions, update the world model, then update the policy again.'),
 ]
 W,H=1280,720
 INK='#263238'; GRAY='#65717a'; BLUE='#dae8fc'; GREEN='#d5e8d4'; YELLOW='#fff2cc'; PURPLE='#e1d5e7'; ACCENT='#2879b9'
@@ -88,7 +88,7 @@ def main():
         return rendered.resize((max(1,round(rendered.width/3)), max(1,round(rendered.height/3))), Image.Resampling.LANCZOS)
     reader=imageio.get_reader(args.rollout);source_fps=reader.get_meta_data()['fps'];source_count=reader.count_frames()
     writer=imageio.get_writer(args.output,fps=args.fps,codec='libx264',quality=8,macro_block_size=16)
-    stills={4:'overview',5:'deployment',17:'collection',26:'world-model',35:'warm-start',45:'ppo',54:'loop'}
+    stills={2:'overview',4:'deployment',13:'collection',22:'world-model',31:'warm-start',41:'ppo',50:'loop'}
     duration=CHAPTERS[-1][1]
     try:
         for frame_id in range(duration*args.fps):
@@ -124,8 +124,8 @@ def main():
                     if distance<=length:
                         f=distance/length;x=a[0]+f*(b[0]-a[0]);y=a[1]+f*(b[1]-a[1]);d.ellipse((x-6,y-6,x+6,y+6),fill=ACCENT);break
                     distance-=length
-            text(45,26,'Online world-model learning / intended methodology',18,GRAY)
-            text(45,66,title,30,strong=True)
+            text(45,26,'Illustrative footage: simulator-trained baseline 1199' if chapter_index==0 else 'Online world-model learning / intended methodology',18,GRAY)
+            text(45,66,title,26 if chapter_index==0 else 30,strong=True)
             d.line((45,121,1235,121),fill='#dfe3e7',width=1)
             if index==0:
                 active=int(local/1.3)%4
@@ -191,9 +191,9 @@ def main():
                 line([(1075,276),(1075,336)])
                 line([(1075,426),(1075,500),(887,500)],.4)
                 text(942,530,'MuJoCo simulation',20,GRAY)
-                text(45,609,args.checkpoint_label+' | command 0.5 m/s',18)
-            d.line((45,647,1235,647),fill='#dfe3e7',width=1)
-            words=caption.split();row='';y=660
+            if chapter_index!=0:
+                d.line((45,647,1235,647),fill='#dfe3e7',width=1)
+            words=caption.split() if chapter_index!=0 else [];row='';y=660
             for word in words:
                 trial=(row+' '+word).strip()
                 if d.textlength(trial,font=fonts[20])>1180:text(45,y,row,20);row=word;y+=25
