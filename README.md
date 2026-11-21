@@ -8,19 +8,29 @@ learned simulator.
 [Read the OCRL report: Learning to Imagine: Autoregressive Dynamics for Long-Horizon Policy Learning](docs/report/OCRL_Report.pdf).
 
 **Status:** training, checkpoint evaluation, video capture, and plotting run locally.
-The current checkpoints do not yet demonstrate reliable velocity-command tracking.
+The current online world-model checkpoints do not yet demonstrate reliable velocity-command tracking.
 The earlier 7030 checkpoint stays upright but mostly stands still; the newer 3710
 checkpoint is unstable in the measured evaluation. See [validation and limitations](docs/validation.md).
 
-## Recorded results
+## Pipeline
 
-![Earlier checkpoint: standing behavior under a forward command](docs/assets/videos/7030-preview.gif)
+[![Watch the animated training and deployment pipeline](docs/assets/videos/pipeline-preview.gif)](docs/assets/videos/pipeline.mp4?raw=true)
 
-*Checkpoint 7030, command `(0.5, 0, 0)`, seed 42. This preview shows standing behavior,
-not successful forward walking. The full recording runs at real-time speed.*
+**[Open or download the full 53-second pipeline video](docs/assets/videos/pipeline.mp4?raw=true)** —
+opens with the simulator baseline rollout, then shows transition collection and
+replay, world-model updates, simulator PPO before
+warm-start ends, a switch to world-model PPO, and repeated optimization. Captioned, with actual rollout
+footage from a separately trained simulator baseline. The diagram shows the intended
+sequence; the current warm-start implementation fits the world model without
+initial simulator PPO updates.
 
-[Watch 7030 recording](docs/assets/videos/7030-rollout.mp4) ·
-[Watch 3710 failure recording](docs/assets/videos/3710-rollout.mp4) ·
+[Baseline 1199 locomotion recording](docs/assets/videos/baseline-1199-rollout.mp4?raw=true):
+20 seconds without a fall at seed 42, with mean forward velocity 0.271 m/s against
+a 0.5 m/s command (RMSE 0.232 m/s). This baseline is distinct from the online
+world-model checkpoints below. [Recorded data](docs/results/baseline-1199).
+
+[Watch 7030 recording](docs/assets/videos/7030-rollout.mp4?raw=true) ·
+[Watch 3710 failure recording](docs/assets/videos/3710-rollout.mp4?raw=true) ·
 [Evaluation data and provenance](docs/results)
 
 | Diagnostic | Earlier run: 7030 | Latest run: 3710 |

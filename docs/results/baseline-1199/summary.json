@@ -1,0 +1,18 @@
+{
+  "completed_episodes": [
+    {
+      "env": 0,
+      "return": 97.44200134277344,
+      "length": 1000,
+      "timeout": true
+    }
+  ],
+  "unfinished_episode_lengths": [
+    0
+  ],
+  "mean_step_reward": 0.09744193651527167,
+  "world_model": {
+    "available": false,
+    "reason": "Simulator-trained baseline; world model not used"
+  }
+}

@@ -106,3 +106,26 @@ four-iteration GPU fresh training; three-iteration GPU checkpoint initialization
 80-step GPU evaluation with video and forecast export; plotting; syntax, links,
 and machine-specific path scanning. New run manifests store relative paths.
 The final smoke checks do not change the previously reported experimental results.
+
+## Locomotion baseline and pipeline animation
+
+Two separate simulator-trained G1 policies (1199 and 1000) were evaluated with
+standard MJLab actor observations, seed 42, a fixed 0.5 m/s forward command, and
+1000 steps. Both completed the 20-second episode without a fall. Checkpoint 1199
+had forward-velocity RMSE 0.232 m/s versus 0.253 m/s for 1000, and was selected
+for the animation. Its side-view rerun averaged 0.271 m/s forward velocity.
+These diagnostics establish a usable baseline demonstration, not reliable tracking
+across seeds or evidence that the online world-model training produced this policy.
+
+`docs/baselines.json` records checkpoint hashes. Baseline 1199 data and manifest
+are in `docs/results/baseline-1199`. The 67-second pipeline video uses the report's
+architecture figures, animated data/optimization flow, and real-time simulator
+footage. It is captioned and silent. Seven CPU tests pass, including a check that
+the baseline adapter preserves the original actor observations. The rendered MP4
+was checked for dimensions, duration, decode errors, and representative chapter frames.
+
+The pipeline animation now presents the requested intended sequence on a white
+background with moving transitions, active nodes, GRU recurrence, optimizer
+feedback, and an explicit simulator-to-world-model PPO switch. Initial simulator
+PPO updates are an intended step, not a claim about the current warm-start code,
+which only collects transitions and fits the world model.

@@ -1,0 +1,20 @@
+{
+  "checkpoints": [
+    {
+      "path": "artifacts/baselines/g1-1199.pt",
+      "iteration": 1199,
+      "sha256": "b9478987c9f48d978952ffa13244cff374d9ff6aa08ee06b4d68d42ac0e0e72b",
+      "bytes": 3890933,
+      "observation_mode": "mjlab",
+      "provenance": "Separate local simulator-trained policy; not produced by the online world-model run"
+    },
+    {
+      "path": "artifacts/baselines/g1-1000.pt",
+      "iteration": 1000,
+      "sha256": "47f4d31f70fc8a3707e799b31000726751e8036568305fcc1b1efdf652e32ef0",
+      "bytes": 3890933,
+      "observation_mode": "mjlab",
+      "provenance": "Separate local simulator-trained policy; not produced by the online world-model run"
+    }
+  ]
+}
