@@ -16,12 +16,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from matplotlib.font_manager import findfont
 
 CHAPTERS = [
-    (0, 9, '1. Collect transitions and store them in a buffer', 'Policy actions produce simulator transitions: state, action, reward, next state, done.'),
-    (9, 20, '2. Update the world model', 'Sample sequences, warm up the GRU, predict future states, and minimize prediction loss.'),
-    (20, 29, '3. Train the policy in the simulator first', 'Before the switch: simulator rollouts provide the rewards and transitions for PPO.'),
-    (29, 39, '3. Switch policy training to the world model', 'After warm-start: imagined transitions and custom rewards drive PPO updates.'),
-    (39, 47, '4. Repeat world-model and policy optimization', 'Collect fresh transitions, update the world model, then update the policy again.'),
-    (47, 67, 'Results: policy rollout in simulation', 'Separate simulator-trained baseline 1199; this footage is not an online world-model training result.'),
+    (0, 20, 'Simulator-trained policy rollout in simulation', 'Separate simulator-trained baseline 1199; this footage is not an online world-model training result.'),
+    (20, 29, '1. Collect transitions and store them in a buffer', 'Policy actions produce simulator transitions: state, action, reward, next state, done.'),
+    (29, 40, '2. Update the world model', 'Sample sequences, warm up the GRU, predict future states, and minimize prediction loss.'),
+    (40, 49, '3. Train the policy in the simulator first', 'Before the switch: simulator rollouts provide the rewards and transitions for PPO.'),
+    (49, 59, '3. Switch policy training to the world model', 'After warm-start: imagined transitions and custom rewards drive PPO updates.'),
+    (59, 67, '4. Repeat world-model and policy optimization', 'Collect fresh transitions, update the world model, then update the policy again.'),
 ]
 W,H=1280,720
 INK='#263238'; GRAY='#65717a'; BLUE='#dae8fc'; GREEN='#d5e8d4'; YELLOW='#fff2cc'; PURPLE='#e1d5e7'; ACCENT='#2879b9'
@@ -88,12 +88,13 @@ def main():
         return rendered.resize((max(1,round(rendered.width/3)), max(1,round(rendered.height/3))), Image.Resampling.LANCZOS)
     reader=imageio.get_reader(args.rollout);source_fps=reader.get_meta_data()['fps'];source_count=reader.count_frames()
     writer=imageio.get_writer(args.output,fps=args.fps,codec='libx264',quality=8,macro_block_size=16)
-    stills={4:'overview',7:'collection',16:'world-model',25:'warm-start',35:'ppo',44:'loop',57:'deployment'}
+    stills={4:'overview',10:'deployment',27:'collection',36:'world-model',45:'warm-start',55:'ppo',64:'loop'}
     try:
         for frame_id in range(67*args.fps):
             t=frame_id/args.fps
-            index=next(i for i,(a,b,_,_) in enumerate(CHAPTERS) if a<=t<b)
-            start,end,title,caption=CHAPTERS[index];local=t-start
+            chapter_index=next(i for i,(a,b,_,_) in enumerate(CHAPTERS) if a<=t<b)
+            start,end,title,caption=CHAPTERS[chapter_index];local=t-start
+            index=(chapter_index-1)%len(CHAPTERS)
             im=Image.new('RGB',(W,H),'white');d=ImageDraw.Draw(im)
             def text(x,y,value,size=22,color=INK,strong=False):
                 if 140 <= y < 640:
